@@ -2,7 +2,7 @@
 
 Gradio-based dashboards for Semantic-Mismatch
 
-working on nlp1: link[http://10.16.88.11:7860]
+working on nlp1: [link](http://10.16.88.11:7860)
 
 
 ## Repository
