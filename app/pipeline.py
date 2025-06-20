@@ -6,7 +6,7 @@ from pathlib import Path
 import gradio as gr
 import pandas as pd
 
-from .settings import side_bar, nav_tag
+from .settings import nav_tag, side_bar
 
 EXTRA_CSS = side_bar
 

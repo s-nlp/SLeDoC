@@ -1,14 +1,24 @@
-import json, tempfile
+import json
+import logging
+import pathlib
+import tempfile
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Dict, List
 
 import gradio as gr
 from lettucedetect.models.inference import HallucinationDetector
 
-from app.settings import side_bar, nav_tag
-
+from app.settings import nav_tag, side_bar
 
 #  Config
+LOGLEVEL = (pathlib.os.getenv("LOGLEVEL") or "INFO").upper()
+logging.basicConfig(
+    level=LOGLEVEL,
+    format="%(levelname)s | %(name)s | %(message)s",
+    force=True,
+)
+log = logging.getLogger(__name__)
+
 EXTRA_CSS = side_bar
 
 # Base directory where the NLI transformer models are stored.
@@ -17,8 +27,49 @@ if not MODEL_BASE.exists():
     MODEL_BASE = (Path(__file__).resolve().parent / "output").resolve()
 
 CLASS_LABELS = {0: "neutral", 1: "contradiction", 2: "entailment"}
+_LABEL_TO_ID = {v: k for k, v in CLASS_LABELS.items()}
+
 # Cache loaded detectors to avoid re‑loading on every click
 _detectors = {}
+
+
+def _span_conf(span: dict) -> float:
+    return span.get("confidence") or span.get("score") or span.get("probability") or 0.0
+
+
+
+def _aggregate_span_predictions(raw) -> dict[str, float]:
+    log.debug("RAW detector output: %s", raw)
+    if raw is None:
+        return {"label": 0, "confidence": 0.0}
+
+    # 1) ready-made single verdict dict (no "spans" key)
+    if isinstance(raw, dict) and "spans" not in raw:
+        conf = _span_conf(raw)
+        lbl = raw.get("label") or _LABEL_TO_ID.get(
+            raw.get("type", "neutral").lower(), 0
+        )
+        return {"label": int(lbl), "confidence": float(conf)}
+
+    # 2) wrapper dict – dig out the span list
+    if isinstance(raw, dict) and "spans" in raw:
+        raw = raw["spans"]  # fall through to case 3
+
+    # 3) raw list of spans
+    if not raw:  # empty list ⇒ default neutral, 0.0
+        return {"label": 0, "confidence": 0.0}
+
+    best = max(raw, key=_span_conf)
+
+    log.debug("BEST span / verdict chosen: %s", best)
+    if "label" in best:  # very old format
+        label_id = int(best["label"])
+    else:
+        label_id = _LABEL_TO_ID.get(best.get("type", "neutral").lower(), 0)
+
+    verdict = {"label": label_id, "confidence": float(_span_conf(best))}
+    log.debug("Aggregated verdict: %s", verdict)
+    return verdict
 
 
 def _list_models() -> List[str]:
@@ -40,7 +91,6 @@ def _get_detector(model_name: str) -> HallucinationDetector:
     return _detectors[model_name]
 
 
-
 def run_nli(model_name: str, claim: str, paragraph: str):
     """Predict the NLI relation between *claim* and *paragraph*."""
     if not model_name:
@@ -56,8 +106,8 @@ def run_nli(model_name: str, claim: str, paragraph: str):
         pred["type"] = CLASS_LABELS.get(pred.get("label", 0))
     return predictions
 
-def _all_pairs(out1: List[Dict[str, str]],
-               out2: List[Dict[str, str]]):
+
+def _all_pairs(out1: List[Dict[str, str]], out2: List[Dict[str, str]]):
     """Cartesian product generator (premise × hypothesis)."""
     for p in out1:
         for h in out2:
@@ -70,6 +120,7 @@ def run_nli_file(model_name: str, file_obj) -> str | None:
     write **nli.json** to a temp-file and return its path so Gradio
     turns it into a downloadable link.
     """
+    model_name = model_name or _list_models()[0]
     if not (model_name and file_obj):
         return None
 
@@ -81,11 +132,15 @@ def run_nli_file(model_name: str, file_obj) -> str | None:
     for block in pairs_in:
         nli_res = []
         for prem, hyp in _all_pairs(block["output_1"], block["output_2"]):
-            pred = detector.predict_prompt(
+
+            # only "tokens" or "spans" are allowed. We request the richer "spans" format and collapse it to a single verdict.
+            span_preds = detector.predict_prompt(
                 prompt=prem["claim"],
                 answer=hyp["claim"],
-                output_format="single",   # returns {"label": int, "confidence": float}
+                output_format="spans",
             )
+            pred = _aggregate_span_predictions(span_preds)
+
             nli_res.append(
                 {
                     "premise": prem["input"],
@@ -135,7 +190,9 @@ with gr.Blocks(css=EXTRA_CSS) as demo:
                     interactive=True,
                 )
 
-                claim_tb = gr.Textbox(label="Claim", lines=2, placeholder="Введите утверждение…")
+                claim_tb = gr.Textbox(
+                    label="Claim", lines=2, placeholder="Введите утверждение…"
+                )
                 paragraph_tb = gr.Textbox(
                     label="Paragraph / Answer",
                     lines=4,
@@ -144,19 +201,28 @@ with gr.Blocks(css=EXTRA_CSS) as demo:
 
             run_btn = gr.Button("Run NLI")
             result_json = gr.JSON(label="Predictions (spans)")
+            run_btn.click(
+                run_nli, inputs=[model_dd, claim_tb, paragraph_tb], outputs=result_json
+            )
 
         # 2 · batch mode from file
         with gr.Tab("Batch file"):
-            file_in = gr.File(label="Upload pairs.json",
-                                   file_types=[".json"], file_count="single")
+            with gr.Row():
+                # model dropdown
+                model_dd_batch = gr.Dropdown(
+                    choices=_list_models(),
+                    label="NLI model",
+                    value=_list_models()[0] if _list_models() else None,
+                    interactive=True,
+                )
+            file_in = gr.File(label="Upload pairs.json", file_types=[".json"])
             run_file_btn = gr.Button("Run NLI on file")
-            file_out = gr.File(label="Download nli.json")
-
-    run_btn.click(
-        run_nli, inputs=[model_dd, claim_tb, paragraph_tb], outputs=result_json
-    )
-    run_file_btn.click(run_nli_file, inputs=[model_dd, file_in], outputs=file_out)
-
+            file_out = gr.File(label="Download nli.json", interactive=False)
+            run_file_btn.click(
+                fn=run_nli_file,
+                inputs=[model_dd_batch, file_in],  # pass the selection
+                outputs=[file_out],
+            )
 
 
 if __name__ == "__main__":

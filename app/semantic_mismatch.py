@@ -4,7 +4,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from .settings import side_bar, nav_tag
+from .settings import nav_tag, side_bar
 
 EXTRA_CSS = """
 .para-box{
