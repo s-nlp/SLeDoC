@@ -5,7 +5,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from .settings import side_bar
+from .settings import side_bar, nav_tag
 
 EXTRA_CSS = """
 .para-box{
@@ -134,16 +134,7 @@ CUSTOM_JS = """
 with gr.Blocks(css=EXTRA_CSS, js=CUSTOM_JS) as demo:
     gr.Markdown("## NLI viewer")
     # ─ sidebar nav
-    gr.HTML(
-        """
-    <div id="sidebar">
-        <a href="/">Pipeline</a>
-        <a href="/mismatch/">Mismatch</a>
-        <a href="/nli/">NLI</a>
-    </div>
-    """,
-        visible=True,
-    )
+    gr.HTML(nav_tag, visible=True)
 
     # ─── file loader row ───────────────────────────────────────────────────
     with gr.Row():

@@ -52,3 +52,13 @@ side_bar = """
 /* keep main app shifted right so it doesn’t sit under the bar */
 body{ margin-left:140px !important; }
 """
+
+
+nav_tag = """
+<div id="sidebar">
+    <a href="/">Pipeline</a>
+    <a href="/mismatch/">Mismatch</a>
+    <a href="/nli/">NLI</a>
+    <a href="/nli-predict/">NLI Predict</a>
+</div>
+"""

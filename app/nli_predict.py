@@ -1,10 +1,11 @@
+import json, tempfile
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any
 
 import gradio as gr
 from lettucedetect.models.inference import HallucinationDetector
 
-from app.settings import side_bar
+from app.settings import side_bar, nav_tag
 
 
 #  Config
@@ -55,45 +56,107 @@ def run_nli(model_name: str, claim: str, paragraph: str):
         pred["type"] = CLASS_LABELS.get(pred.get("label", 0))
     return predictions
 
+def _all_pairs(out1: List[Dict[str, str]],
+               out2: List[Dict[str, str]]):
+    """Cartesian product generator (premise × hypothesis)."""
+    for p in out1:
+        for h in out2:
+            yield p, h
+
+
+def run_nli_file(model_name: str, file_obj) -> str | None:
+    """
+    Read *pairs.json*, run the NLI model over every (claim, claim) pair,
+    write **nli.json** to a temp-file and return its path so Gradio
+    turns it into a downloadable link.
+    """
+    if not (model_name and file_obj):
+        return None
+
+    detector = _get_detector(model_name)
+    raw = file_obj.read() if hasattr(file_obj, "read") else open(file_obj, "rb").read()
+    pairs_in = json.loads(raw)
+
+    pairs_out = []
+    for block in pairs_in:
+        nli_res = []
+        for prem, hyp in _all_pairs(block["output_1"], block["output_2"]):
+            pred = detector.predict_prompt(
+                prompt=prem["claim"],
+                answer=hyp["claim"],
+                output_format="single",   # returns {"label": int, "confidence": float}
+            )
+            nli_res.append(
+                {
+                    "premise": prem["input"],
+                    "hypothesis": hyp["input"],
+                    "premise_raw": prem["claim"],
+                    "hypothesis_raw": hyp["claim"],
+                    "label": CLASS_LABELS[pred["label"]],
+                    "confidence": pred["confidence"],
+                }
+            )
+
+        pairs_out.append(
+            {
+                "input_1": block["paragraph_1"],
+                "input_2": block["paragraph_2"],
+                "output_1": block["output_1"],
+                "output_2": block["output_2"],
+                "nli_results": nli_res,
+                "nli_model": model_name,
+            }
+        )
+
+    tmp = tempfile.NamedTemporaryFile(
+        delete=False, suffix=".json", mode="w", encoding="utf-8"
+    )
+    json.dump(pairs_out, tmp, ensure_ascii=False, indent=2)
+    tmp.close()
+    return tmp.name
+
 
 with gr.Blocks(css=EXTRA_CSS) as demo:
     gr.Markdown("## NLI Predictor")
 
     # sidebar nav
-    gr.HTML(
-        """
-        <div id="sidebar">
-            <a href="/">Pipeline</a>
-            <a href="/mismatch/">Mismatch</a>
-            <a href="/nli/">NLI Viewer</a>
-            <a href="/nli-predict/">NLI Predict</a>
-        </div>
-        """,
-        visible=True,
-    )
+    gr.HTML(nav_tag, visible=True)
 
     # input widgets
-    with gr.Row():
-        model_dd = gr.Dropdown(
-            label="Model",
-            choices=_list_models(),
-            value=_list_models()[0] if _list_models() else None,
-            interactive=True,
-        )
+    # two ways to run the model
+    with gr.Tabs():
+        # 1 · single pair
+        with gr.Tab("Single pair"):
+            with gr.Row():
+                model_dd = gr.Dropdown(
+                    label="Model",
+                    choices=_list_models(),
+                    value=_list_models()[0] if _list_models() else None,
+                    interactive=True,
+                )
 
-    claim_tb = gr.Textbox(label="Claim", lines=2, placeholder="Введите утверждение…")
-    paragraph_tb = gr.Textbox(
-        label="Paragraph / Answer",
-        lines=4,
-        placeholder="Введите абзац / ответ…",
-    )
+                claim_tb = gr.Textbox(label="Claim", lines=2, placeholder="Введите утверждение…")
+                paragraph_tb = gr.Textbox(
+                    label="Paragraph / Answer",
+                    lines=4,
+                    placeholder="Введите абзац / ответ…",
+                )
 
-    run_btn = gr.Button("Run NLI")
-    result_json = gr.JSON(label="Predictions (spans)")
+            run_btn = gr.Button("Run NLI")
+            result_json = gr.JSON(label="Predictions (spans)")
+
+        # 2 · batch mode from file
+        with gr.Tab("Batch file"):
+            file_in = gr.File(label="Upload pairs.json",
+                                   file_types=[".json"], file_count="single")
+            run_file_btn = gr.Button("Run NLI on file")
+            file_out = gr.File(label="Download nli.json")
 
     run_btn.click(
         run_nli, inputs=[model_dd, claim_tb, paragraph_tb], outputs=result_json
     )
+    run_file_btn.click(run_nli_file, inputs=[model_dd, file_in], outputs=file_out)
+
 
 
 if __name__ == "__main__":

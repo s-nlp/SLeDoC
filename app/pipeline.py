@@ -6,7 +6,7 @@ from pathlib import Path
 import gradio as gr
 import pandas as pd
 
-from .settings import side_bar
+from .settings import side_bar, nav_tag
 
 EXTRA_CSS = side_bar
 
@@ -123,16 +123,7 @@ def make_dummy_nli(pars_json: str):
 with gr.Blocks(css=EXTRA_CSS) as demo:
     gr.Markdown("## Main Pipeline")
     # ─ sidebar nav
-    gr.HTML(
-        """
-    <div id="sidebar">
-        <a href="/">Pipeline</a>
-        <a href="/mismatch/">Mismatch</a>
-        <a href="/nli/">NLI</a>
-    </div>
-    """,
-        visible=True,
-    )
+    gr.HTML(nav_tag, visible=True)
 
     with gr.Tabs():
         # 3-a · Extraction tab ------------------------------------------------
