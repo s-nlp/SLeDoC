@@ -47,7 +47,7 @@ EXTRA_CSS = """
 EXTRA_CSS += side_bar
 
 
-DEFAULT_JSON = Path("pairs.json")
+DEFAULT_JSON = Path("example_data/pairs.json")
 COLOR_PALETTE = [
     # "#d1e7dd",  # light green
     "#dbeafe55",  # light blue

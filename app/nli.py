@@ -26,7 +26,7 @@ EXTRA_CSS += side_bar
 
 PASTELS = ["#dbeafe55", "#ddd6fe55", "#e5e5e555"]  # faint pastels
 ENTAIL_CLR, CONTRA_CLR = "#22c55e", "#f43f5e"  # bright colours
-DATA_FILE = Path("nli_test.jsonl")  # initial demo data
+DATA_FILE = Path("example_data/nli_test.jsonl")  # initial demo data
 
 
 def load_pairs(path_or_handle):

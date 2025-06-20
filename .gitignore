@@ -20,3 +20,5 @@
 
 # 🤗 cache, 🏝️ Python environment, maybe something else...
 *.cache/
+nli/output/*
+!nli/output/.gitkeep
