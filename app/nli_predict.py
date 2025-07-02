@@ -100,7 +100,6 @@ def run_nli(model_name: str, claim: str, paragraph: str):
     predictions = detector.predict_prompt(
         prompt=claim, answer=paragraph, output_format="spans"
     )
-
     # Map numeric labels → human‑readable strings
     for pred in predictions:
         pred["type"] = CLASS_LABELS.get(pred.get("label", 0))
@@ -121,10 +120,8 @@ def run_nli_file(model_name: str, file_obj) -> str | None:
     turns it into a downloadable link.
     """
     model_name = model_name or _list_models()[0]
-    if not (model_name and file_obj):
-        return None
-
     detector = _get_detector(model_name)
+    print("DETECTOR", detector)
     raw = file_obj.read() if hasattr(file_obj, "read") else open(file_obj, "rb").read()
     pairs_in = json.loads(raw)
 
@@ -132,14 +129,17 @@ def run_nli_file(model_name: str, file_obj) -> str | None:
     for block in pairs_in:
         nli_res = []
         for prem, hyp in _all_pairs(block["output_1"], block["output_2"]):
-
+            print("PREM", prem["claim"])
+            print("hyp", hyp["claim"])
+            
             # only "tokens" or "spans" are allowed. We request the richer "spans" format and collapse it to a single verdict.
-            span_preds = detector.predict_prompt(
-                prompt=prem["claim"],
-                answer=hyp["claim"],
+            predictions = detector.predict_prompt(
+                prompt=str(prem["claim"]),
+                answer=str(hyp["claim"]),
                 output_format="spans",
             )
-            pred = _aggregate_span_predictions(span_preds)
+            print(predictions)
+            pred = _aggregate_span_predictions(predictions)
 
             nli_res.append(
                 {
@@ -210,8 +210,8 @@ with gr.Blocks(css=EXTRA_CSS) as demo:
             with gr.Row():
                 # model dropdown
                 model_dd_batch = gr.Dropdown(
+                    label="Model",
                     choices=_list_models(),
-                    label="NLI model",
                     value=_list_models()[0] if _list_models() else None,
                     interactive=True,
                 )
@@ -220,7 +220,7 @@ with gr.Blocks(css=EXTRA_CSS) as demo:
             file_out = gr.File(label="Download nli.json", interactive=False)
             run_file_btn.click(
                 fn=run_nli_file,
-                inputs=[model_dd_batch, file_in],  # pass the selection
+                inputs=[model_dd_batch, file_in],
                 outputs=[file_out],
             )
 
