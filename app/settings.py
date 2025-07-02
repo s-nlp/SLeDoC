@@ -60,6 +60,5 @@ nav_tag = """
     <a href="/">Pipeline</a>
     <a href="/mismatch/">Mismatch</a>
     <a href="/nli/">NLI</a>
-    <a href="/nli-predict/">NLI Predict</a>
 </div>
 """

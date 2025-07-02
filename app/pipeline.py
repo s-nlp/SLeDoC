@@ -7,6 +7,7 @@ import gradio as gr
 import pandas as pd
 
 from .settings import nav_tag, side_bar
+from app.nli_predict       import demo as nli_predict_demo
 
 EXTRA_CSS = side_bar
 
@@ -145,23 +146,9 @@ with gr.Blocks(css=EXTRA_CSS) as demo:
 
         # 3-b · NLI tab ------------------------------------------------------
         with gr.Tab("2. Compute NLI"):
-            json_in = gr.Textbox(
-                label="Paste claims JSON from step 1", lines=8, placeholder="[…]"
-            )
-            hypo_in = gr.Textbox(label="Hypothesis / second document", lines=3)
-            nli_btn = gr.Button("Run NLI")
-            nli_js = gr.JSON(label="⟶ NLI JSON")
-
-            run_btn.click(
-                lambda f: fake_extract(f) if f else gr.update(),
-                inputs=in_file,
-                outputs=claims_js,
-            )
-            nli_btn.click(
-                lambda j, h: make_dummy_nli(j, h) if (j and h) else gr.update(),
-                inputs=[json_in, hypo_in],
-                outputs=nli_js,
-            )
+            nli_predict_demo.render()
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.queue(concurrency_count=4).launch(
+        show_error=True,
+    )
