@@ -14,6 +14,7 @@ side_bar_left_top = """
 body{ margin-left:140px !important; }   /* push the app aside */
 """
 
+
 side_bar = """
 /* ── left-bottom nav bar ─────────────────────────────────────────────── */
 #sidebar{

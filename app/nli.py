@@ -12,6 +12,8 @@ EXTRA_CSS = """
     border:1px solid #000; padding:8px; min-height:320px; min-width:320px;
 }
 .hl{position:relative; cursor:help;}
+.hl.selected     { background-color:#ffff66 !important; outline:2px solid #000; }
+.hl.dimmed       { opacity:.35; }
 .hl:hover::after,.hl:focus::after{
     content:attr(data-claim);
     position:absolute; left:0; top:100%;
@@ -127,6 +129,27 @@ CUSTOM_JS = """
           confBox().textContent = 'Confidence: -';
       }
   });
+  /* click = lock / unlock */
+    document.addEventListener('click', ev=>{
+    const span = ev.target.closest('span.hl');
+    if(!span) return;
+
+    /* Clear previous selection */
+    document.querySelectorAll('span.hl.selected, span.hl.dimmed')
+            .forEach(el => { el.classList.remove('selected','dimmed'); });
+
+    /* Select the clicked span and its counterpart (if any) */
+    const targetId = span.dataset.target;
+    span.classList.add('selected');
+    if(targetId){
+        const mate = document.getElementById(targetId);
+        if(mate) mate.classList.add('selected');
+    }
+
+    /* Dim every other span to emphasise the pair */
+    document.querySelectorAll('span.hl:not(.selected)')
+            .forEach(el => el.classList.add('dimmed'));
+    });
 }
 """
 

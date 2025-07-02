@@ -20,7 +20,8 @@ EXTRA_CSS = """
     position:relative;
     cursor:help;
 }
-
+.hl.selected     { background-color:#ffff66 !important; outline:2px solid #000; }
+.hl.dimmed       { opacity:.35; }
 .hl:hover::after,
 .hl:focus::after{                       /* include :focus if you kept that */
     content:attr(data-claim);

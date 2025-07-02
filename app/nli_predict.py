@@ -7,6 +7,13 @@ from typing import Dict, List
 
 import gradio as gr
 from lettucedetect.models.inference import HallucinationDetector
+from functools import partial
+
+# Try a few output formats until one returns something useful
+_predict_prompt = partial(
+    HallucinationDetector.predict_prompt, output_format="spans"
+)
+
 
 from app.settings import nav_tag, side_bar
 
@@ -34,7 +41,18 @@ _detectors = {}
 
 
 def _span_conf(span: dict) -> float:
-    return span.get("confidence") or span.get("score") or span.get("probability") or 0.0
+    """
+    Return the numeric confidence of a model span.
+    Different detector versions use slightly different keys – deal with all of
+    them here so downstream code never breaks.
+    """
+    for k in ("confidence", "score", "conf", "probability"):
+        if k in span and span[k] is not None:
+            return float(span[k])
+    # if the span *is* a bare float already
+    if isinstance(span, (float, int)):
+        return float(span)
+    return 0.0        # last-resort fallback
 
 
 
@@ -111,7 +129,22 @@ def _all_pairs(out1: List[Dict[str, str]], out2: List[Dict[str, str]]):
     for p in out1:
         for h in out2:
             yield p, h
-
+            
+            
+def _predict(detector, premise: str, hypothesis: str):
+    """
+    Wrapper that keeps asking the detector in different formats until we get a
+    non-empty response.  It fixes the '[] ⇒ neutral/0' problem.
+    """
+    for fmt in ("spans", "tokens", "classification"):
+        out = detector.predict_prompt(
+            prompt=premise,
+            answer=hypothesis,
+            output_format=fmt,
+        )
+        if out:                       # anything truthy → good enough
+            return out
+    return None                       # give up
 
 def run_nli_file(model_name: str, file_obj) -> str | None:
     """
@@ -129,16 +162,12 @@ def run_nli_file(model_name: str, file_obj) -> str | None:
     for block in pairs_in:
         nli_res = []
         for prem, hyp in _all_pairs(block["output_1"], block["output_2"]):
-            print("PREM", prem["claim"])
-            print("hyp", hyp["claim"])
-            
-            # only "tokens" or "spans" are allowed. We request the richer "spans" format and collapse it to a single verdict.
-            predictions = detector.predict_prompt(
-                prompt=str(prem["claim"]),
-                answer=str(hyp["claim"]),
-                output_format="spans",
+            predictions = _predict(
+                detector,
+                str(prem["claim"]),
+                str(hyp["claim"]),
             )
-            print(predictions)
+            
             pred = _aggregate_span_predictions(predictions)
 
             nli_res.append(
