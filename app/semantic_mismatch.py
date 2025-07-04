@@ -43,6 +43,9 @@ EXTRA_CSS = """
     line-height:1.3;
     box-shadow:0 2px 6px rgba(0,0,0,.25);
 }
+/* visual states controlled by JS  */
+.hl.selected{background-color:#ffff66 !important; outline:2px solid #000;}
+.hl.dimmed  {opacity:.35;}
 """
 
 EXTRA_CSS += side_bar
@@ -124,10 +127,32 @@ def load_json(uploaded_file):
     return p1, p2, sim, slider_cfg
 
 
-# ---------- UI --------------------------------------------------------------
-with gr.Blocks(
-    css=EXTRA_CSS,
-) as demo:
+CUSTOM_JS = """
+() => {
+  /* remove every highlight state */
+  const clear = () => document
+        .querySelectorAll('span.hl.selected, span.hl.dimmed')
+        .forEach(el => el.classList.remove('selected','dimmed'));
+
+  document.addEventListener('click', ev => {
+      const span = ev.target.closest('span.hl');
+
+      /* always begin by clearing the old state */
+      clear();
+
+      /* clicked a highlight?  select + dim the rest */
+      if(span){
+          span.classList.add('selected');
+          document
+            .querySelectorAll('span.hl:not(.selected)')
+            .forEach(el => el.classList.add('dimmed'));
+      }
+  });
+}
+"""
+
+# UI
+with gr.Blocks(css=EXTRA_CSS, js=CUSTOM_JS) as demo:
     gr.Markdown("## Semantic Mismatch Viewer")
     # ─ sidebar nav
     gr.HTML(nav_tag, visible=True)

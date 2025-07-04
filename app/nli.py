@@ -129,7 +129,7 @@ CUSTOM_JS = """
           confBox().textContent = 'Confidence: -';
       }
   });
-  /* click = lock / unlock */
+    /* click = lock / unlock */
     document.addEventListener('click', ev=>{
     const span = ev.target.closest('span.hl');
     if(!span) return;

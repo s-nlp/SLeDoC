@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import openai
-from openai import OpenAI
 from dotenv import load_dotenv
+from openai import OpenAI
 from tenacity import (
     retry,
     retry_if_exception_type,
