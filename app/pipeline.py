@@ -6,10 +6,30 @@ from pathlib import Path
 import gradio as gr
 import pandas as pd
 
+from app.clame_extractor import DEFAULT_SYSTEM_PROMPT, run_claim_extraction
+from app.nli_predict import demo as nli_predict_demo
+
 from .settings import nav_tag, side_bar
-from app.nli_predict       import demo as nli_predict_demo
 
 EXTRA_CSS = side_bar
+
+
+def ui_run_claims(in_file, sys_prompt, model_name, temperature, use_env, api_key):
+    if in_file is None:
+        raise gr.Error("Please upload a .json file first.")
+
+    key_arg = None if use_env else api_key
+
+    out_path = run_claim_extraction(
+        input_path=in_file.name,
+        api_key=key_arg,
+        system_prompt=sys_prompt,
+        model_name=model_name,
+        temperature=temperature,
+    )
+
+    # ✅  Cast Path to str so gr.File can serialise it
+    return str(out_path)
 
 
 # --------------------------------------------------------------------------
@@ -128,20 +148,55 @@ with gr.Blocks(css=EXTRA_CSS) as demo:
 
     with gr.Tabs():
         # 3-a · Extraction tab ------------------------------------------------
-        with gr.Tab("1. Extract claims"):
-            in_file = gr.File(label="Upload document (.xlsx / .json)")
-            run_btn = gr.Button("Run extraction")
-            claims_js = gr.JSON(label="⟶ Claims / Inputs JSON")
-            dl_btn = gr.DownloadButton(
-                label="Download JSON",
-                # file_name="pars.json",
-                visible=True,
+        with gr.Tab("💬 1. Extract claims"):
+            in_file = gr.File(
+                label="JSON with paragraph_1 / paragraph_2",
+                file_types=[".json"],
             )
 
+            sys_prompt_box = gr.Textbox(
+                label="System Prompt",
+                value=DEFAULT_SYSTEM_PROMPT,
+                lines=12,
+            )
+            model_name_box = gr.Textbox(label="OpenAI model", value="gpt-4o")
+            temp_slider = gr.Slider(0.0, 1.0, value=0.2, step=0.01, label="Temperature")
+
+            # ── NEW: choose where the key comes from ──────────────────────────────────
+            use_env_key = gr.Checkbox(
+                label="Use $OPENAI_API_KEY from environment / .env",
+                value=True,
+            )
+            api_key_box = gr.Textbox(
+                label="OpenAI API key (only if not using env)",
+                type="password",
+                visible=False,  # start hidden
+                placeholder="sk-...",
+            )
+
+            def _toggle(v):  # v == True  → hide textbox
+                return gr.update(visible=not v)
+
+            use_env_key.change(_toggle, use_env_key, api_key_box)
+            # ─────────────────────────────────────────────────────────────────────────
+
+            with gr.Row():
+                run_btn = gr.Button(
+                    "Extract", scale=1
+                )  # scale expands in the flex-box row
+            out_file = gr.File(label="⇩ Enriched JSON")
+
             run_btn.click(
-                lambda f: fake_extract(f) if f else (gr.update(), gr.update()),
-                inputs=in_file,
-                outputs=[claims_js, dl_btn],
+                fn=ui_run_claims,
+                inputs=[
+                    in_file,
+                    sys_prompt_box,
+                    model_name_box,
+                    temp_slider,
+                    use_env_key,
+                    api_key_box,
+                ],
+                outputs=out_file,
             )
 
         # 3-b · NLI tab ------------------------------------------------------

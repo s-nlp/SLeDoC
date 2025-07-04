@@ -7,15 +7,24 @@ from typing import Dict, List
 
 import gradio as gr
 from lettucedetect.models.inference import HallucinationDetector
-from functools import partial
-
-# Try a few output formats until one returns something useful
-_predict_prompt = partial(
-    HallucinationDetector.predict_prompt, output_format="spans"
-)
-
 
 from app.settings import nav_tag, side_bar
+
+
+# Try a few output formats until one returns something useful
+# ‘classification’ is asked **first** because it *always* yields exactly one
+# verdict with a numeric score.
+def _predict(detector, premise: str, hypothesis: str):
+    for fmt in ("classification", "spans", "tokens"):
+        out = detector.predict_prompt(
+            prompt=premise,
+            answer=hypothesis,
+            output_format=fmt,
+        )
+        if out not in (None, [], {}):  # any non-empty result is good
+            return out
+    return None  # give up completely
+
 
 #  Config
 LOGLEVEL = (pathlib.os.getenv("LOGLEVEL") or "INFO").upper()
@@ -46,14 +55,24 @@ def _span_conf(span: dict) -> float:
     Different detector versions use slightly different keys – deal with all of
     them here so downstream code never breaks.
     """
-    for k in ("confidence", "score", "conf", "probability"):
+    for k in (
+        "confidence",
+        "score",
+        "scores",  # 🤗 transformers-style list of logits
+        "conf",
+        "prob",
+        "probability",
+    ):
         if k in span and span[k] is not None:
-            return float(span[k])
+            v = span[k]
+            # 'scores' can be a list → pick the max-probability logit
+            if isinstance(v, (list, tuple)):
+                v = max(v)
+            return float(v)
     # if the span *is* a bare float already
     if isinstance(span, (float, int)):
         return float(span)
-    return 0.0        # last-resort fallback
-
+    return 0.0  # last-resort fallback
 
 
 def _aggregate_span_predictions(raw) -> dict[str, float]:
@@ -64,9 +83,10 @@ def _aggregate_span_predictions(raw) -> dict[str, float]:
     # 1) ready-made single verdict dict (no "spans" key)
     if isinstance(raw, dict) and "spans" not in raw:
         conf = _span_conf(raw)
-        lbl = raw.get("label") or _LABEL_TO_ID.get(
-            raw.get("type", "neutral").lower(), 0
-        )
+        lbl = raw.get("label")
+        if isinstance(lbl, str):
+            lbl = _LABEL_TO_ID.get(lbl.lower(), 0)
+        lbl = int(lbl or 0)
         return {"label": int(lbl), "confidence": float(conf)}
 
     # 2) wrapper dict – dig out the span list
@@ -129,8 +149,8 @@ def _all_pairs(out1: List[Dict[str, str]], out2: List[Dict[str, str]]):
     for p in out1:
         for h in out2:
             yield p, h
-            
-            
+
+
 def _predict(detector, premise: str, hypothesis: str):
     """
     Wrapper that keeps asking the detector in different formats until we get a
@@ -142,9 +162,10 @@ def _predict(detector, premise: str, hypothesis: str):
             answer=hypothesis,
             output_format=fmt,
         )
-        if out:                       # anything truthy → good enough
+        if out:  # anything truthy → good enough
             return out
-    return None                       # give up
+    return None  # give up
+
 
 def run_nli_file(model_name: str, file_obj) -> str | None:
     """
@@ -167,7 +188,6 @@ def run_nli_file(model_name: str, file_obj) -> str | None:
                 str(prem["claim"]),
                 str(hyp["claim"]),
             )
-            
             pred = _aggregate_span_predictions(predictions)
 
             nli_res.append(
@@ -209,6 +229,25 @@ with gr.Blocks(css=EXTRA_CSS) as demo:
     # input widgets
     # two ways to run the model
     with gr.Tabs():
+        # 2 · batch mode from file
+        with gr.Tab("File"):
+            with gr.Row():
+                # model dropdown
+                model_dd_batch = gr.Dropdown(
+                    label="Model",
+                    choices=_list_models(),
+                    value=_list_models()[0] if _list_models() else None,
+                    interactive=True,
+                )
+            file_in = gr.File(label="Upload pairs.json", file_types=[".json"])
+            run_file_btn = gr.Button("Run NLI on file")
+            file_out = gr.File(label="Download nli.json", interactive=False)
+            run_file_btn.click(
+                fn=run_nli_file,
+                inputs=[model_dd_batch, file_in],
+                outputs=[file_out],
+            )
+
         # 1 · single pair
         with gr.Tab("Single pair"):
             with gr.Row():
@@ -233,26 +272,6 @@ with gr.Blocks(css=EXTRA_CSS) as demo:
             run_btn.click(
                 run_nli, inputs=[model_dd, claim_tb, paragraph_tb], outputs=result_json
             )
-
-        # 2 · batch mode from file
-        with gr.Tab("Batch file"):
-            with gr.Row():
-                # model dropdown
-                model_dd_batch = gr.Dropdown(
-                    label="Model",
-                    choices=_list_models(),
-                    value=_list_models()[0] if _list_models() else None,
-                    interactive=True,
-                )
-            file_in = gr.File(label="Upload pairs.json", file_types=[".json"])
-            run_file_btn = gr.Button("Run NLI on file")
-            file_out = gr.File(label="Download nli.json", interactive=False)
-            run_file_btn.click(
-                fn=run_nli_file,
-                inputs=[model_dd_batch, file_in],
-                outputs=[file_out],
-            )
-
 
 if __name__ == "__main__":
     demo.launch()

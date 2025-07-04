@@ -22,3 +22,6 @@
 *.cache/
 nli/output/*
 !nli/output/.gitkeep
+
+# api keys etc..
+.env
