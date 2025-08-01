@@ -1,3 +1,4 @@
+import os
 import io
 import json
 from datetime import datetime as dt
@@ -7,11 +8,19 @@ import gradio as gr
 import pandas as pd
 
 from app.clame_extractor import DEFAULT_SYSTEM_PROMPT, run_claim_extraction
+
 from app.nli_predict import demo as nli_predict_demo
+from app.combine_pairs import demo as combine_demo
 
 from .settings import nav_tag, side_bar
 
 EXTRA_CSS = side_bar
+OPENAI_MODELS = ["gpt-4o", "gpt-3.5-turbo-0125"]
+OPENROUTER_MODELS = [
+    "openrouter/mistral-7b",
+    "openrouter/meta-llama-3-70b-instruct",
+    "openrouter/mistralai-mistral-8x22b",
+]
 
 
 def ui_run_claims(in_file, sys_prompt, model_name, temperature, use_env, api_key):
@@ -22,7 +31,7 @@ def ui_run_claims(in_file, sys_prompt, model_name, temperature, use_env, api_key
 
     out_path = run_claim_extraction(
         input_path=in_file.name,
-        api_key=key_arg,
+        # api_key=key_arg,
         system_prompt=sys_prompt,
         model_name=model_name,
         temperature=temperature,
@@ -153,13 +162,18 @@ with gr.Blocks(css=EXTRA_CSS) as demo:
                 label="JSON with paragraph_1 / paragraph_2",
                 file_types=[".json"],
             )
-
+            model_dd = gr.Dropdown(
+                label="Model",
+                choices=OPENAI_MODELS + OPENROUTER_MODELS,
+                value=os.getenv("DEFAULT_MODEL", OPENAI_MODELS[0]),
+                interactive=True,
+            )
             sys_prompt_box = gr.Textbox(
                 label="System Prompt",
                 value=DEFAULT_SYSTEM_PROMPT,
                 lines=12,
             )
-            model_name_box = gr.Textbox(label="OpenAI model", value="gpt-4o")
+            # model_name_box = gr.Textbox(label="OpenAI model", value="gpt-4o")
             temp_slider = gr.Slider(0.0, 1.0, value=0.2, step=0.01, label="Temperature")
 
             # ── NEW: choose where the key comes from ──────────────────────────────────
@@ -191,7 +205,7 @@ with gr.Blocks(css=EXTRA_CSS) as demo:
                 inputs=[
                     in_file,
                     sys_prompt_box,
-                    model_name_box,
+                    model_dd,
                     temp_slider,
                     use_env_key,
                     api_key_box,
@@ -202,6 +216,9 @@ with gr.Blocks(css=EXTRA_CSS) as demo:
         # 3-b · NLI tab ------------------------------------------------------
         with gr.Tab("2. Compute NLI"):
             nli_predict_demo.render()
+        # 🆕 Stage-3 tab
+        with gr.Tab("3. Build final text"):
+            combine_demo.render()
 
 if __name__ == "__main__":
     demo.queue(concurrency_count=4).launch(

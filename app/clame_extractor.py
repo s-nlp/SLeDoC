@@ -45,6 +45,8 @@ DEFAULT_SYSTEM_PROMPT = """Ты — юридический аналитик, к�
   }
 ]"""
 
+from app.openai_client import make_client
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Low-level OpenAI wrapper with basic exponential-back-off
@@ -59,11 +61,10 @@ def _chat_completion(
     system_prompt: str,
     model_name: str,
     temperature: float,
-    key: str,
 ) -> str:
-    client = OpenAI(api_key=default_api_key)
+    client, model_id = make_client(model_name)
     resp = client.chat.completions.create(
-        model=model_name,
+        model=model_id,
         temperature=temperature,
         messages=[
             {"role": "system", "content": system_prompt},
@@ -82,12 +83,12 @@ def _postprocess_to_list(text: str) -> List[Dict[str, str]]:
     return json.loads(cleaned)  # raises if still invalid → caught upstream
 
 
-def _extract(
+def _extract_for_paragraph(
     paragraph: str,
+    *,
     system_prompt: str,
     model_name: str,
     temperature: float,
-    key: str,
 ) -> List[Dict[str, str]]:
     """
     Extract minimal claims for one *paragraph* (string) → list[dict].
@@ -97,7 +98,6 @@ def _extract(
         system_prompt=system_prompt,
         model_name=model_name,
         temperature=temperature,
-        key=key,
     )
     return _postprocess_to_list(raw)
 
@@ -109,26 +109,20 @@ def run_claim_extraction(
     input_path: str | Path,
     output_path: str | Path | None = None,
     *,
-    api_key: str | None,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     model_name: str = "gpt-4o",
     temperature: float = 0.2,
 ) -> Path:
+    """Extract claims for every ``{"paragraph_1", "paragraph_2"}`` record in
+    *input_path* and write a sibling file suffixed with ``_claims``.
+
+    The function **automatically** chooses the right API endpoint depending on
+    ``model_name`` (see top of this file).
     """
-    Adds `output_1` / `output_2` lists with extracted claims to every dict in
-    *input_path* and writes the result JSON next to it (unless *output_path*
-    specified).  Returns the final Path.
-    """
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    if not api_key:
-        raise ValueError("OpenAI API key missing – provide via UI or env var")
-    openai.api_key = api_key
 
     input_path = Path(input_path)
     if output_path is None:
-        output_path = input_path.with_name(
-            f"{input_path.stem}_claims{input_path.suffix}"
-        )
+        output_path = input_path.with_name(f"{input_path.stem}_claims{input_path.suffix}")
     output_path = Path(output_path)
 
     with input_path.open("r", encoding="utf-8") as f:
@@ -136,22 +130,22 @@ def run_claim_extraction(
 
     for rec in tqdm(data, desc="Extracting claims", ncols=88):
         try:
-            rec["output_1"] = _extract(
+            rec["output_1"] = _extract_for_paragraph(
                 rec["paragraph_1"],
                 system_prompt=system_prompt,
                 model_name=model_name,
                 temperature=temperature,
-                key=api_key,
             )
-            rec["output_2"] = _extract(
+            rec["output_2"] = _extract_for_paragraph(
                 rec["paragraph_2"],
                 system_prompt=system_prompt,
                 model_name=model_name,
                 temperature=temperature,
-                key=api_key,
             )
+            # Whatever your similarity placeholder was ↓
             rec["similarity"] = rec.get("similarity", 0.0)
-        except Exception as exc:  # keep batch going – mark failures
+        except Exception as exc:
+            # Keep batch going – mark failures for later inspection
             rec["output_1"] = None
             rec["output_2"] = None
             rec["similarity"] = None
