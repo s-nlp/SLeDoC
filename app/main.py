@@ -1,12 +1,12 @@
 import gradio as gr
 from fastapi import FastAPI
 
+from app import align_docs as ad
+from app import convert_to_our_format as conv
 from app import nli
 from app import nli_predict as np
 from app import pipeline as mp
 from app import semantic_mismatch as sm
-from app import convert_to_our_format as conv
-from app import align_docs as ad
 
 app = FastAPI()
 

@@ -1,6 +1,6 @@
-
 import ast
 import json
+import tempfile
 from pathlib import Path
 from typing import Dict, List
 
@@ -15,24 +15,26 @@ LABEL_MAP_DEFAULT = {
     "addition": "neutral",
 }
 
+
 def _safe_literal_eval(x):
     try:
         return ast.literal_eval(x)
     except Exception:
         try:
-            # Sometimes already parsed
             if isinstance(x, list):
                 return x
             return json.loads(x)
         except Exception:
             return []
 
+
 def convert_csv_to_nli_json(
     csv_file: str | Path,
     label_map: Dict[str, str] | None = None,
     keep_reasoning: bool = True,
 ) -> List[dict]:
-    """Read CSV with columns ['paragraph_1','paragraph_2','output'] and
+    """
+    Read CSV with columns ['paragraph_1','paragraph_2','output'] and
     produce a list of dicts in our NLI container format:
       {
         "input_1": <full paragraph_1>,
@@ -63,11 +65,8 @@ def convert_csv_to_nli_json(
         p2 = str(row.get("paragraph_2", "") or "")
         raw = _safe_literal_eval(row.get("output", "[]"))
 
-        # gather unique spans
-        spans1 = []
-        spans2 = []
-        seen1 = set()
-        seen2 = set()
+        spans1, spans2 = [], []
+        seen1, seen2 = set(), set()
 
         nli_results = []
         for item in raw or []:
@@ -107,11 +106,6 @@ def convert_csv_to_nli_json(
         )
     return out
 
-def _save_json(obj, path: Path) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
-    return path
 
 def _parse_label_map(text: str) -> Dict[str, str]:
     text = (text or "").strip()
@@ -127,37 +121,65 @@ def _parse_label_map(text: str) -> Dict[str, str]:
                 out[k] = v
     return out or LABEL_MAP_DEFAULT.copy()
 
-def _convert(csv_file, label_map_text, keep_reasoning):
+
+def _convert_tmp(csv_file, label_map_text, keep_reasoning):
     if not csv_file:
         raise gr.Error("Please upload a CSV file.")
     lm = _parse_label_map(label_map_text)
-    result = convert_csv_to_nli_json(csv_file.name if hasattr(csv_file, "name") else csv_file, lm, keep_reasoning)
-    out_path = Path("nli") / "output" / f"converted_{Path(csv_file.name).stem}.json"
-    _save_json(result, out_path)
-    return str(out_path), json.dumps(result[:2], ensure_ascii=False, indent=2)  # preview first 2
+    result = convert_csv_to_nli_json(
+        csv_file.name if hasattr(csv_file, "name") else csv_file,
+        lm,
+        keep_reasoning,
+    )
+
+    # Write to a writable temp directory (works even if app root is read-only)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="nli_convert_"))
+    fname = f"converted_{Path(csv_file.name).stem}.json"
+    out_path = tmp_dir / fname
+    out_path.write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    preview_text = json.dumps(result[:2], ensure_ascii=False, indent=2)
+
+    # Your Gradio version's DownloadButton expects a *path* string, not bytes/BytesIO
+    return gr.update(value=str(out_path), visible=True), preview_text
+
 
 def build_demo():
-    with gr.Blocks(title="Convert CSV → NLI JSON", css=side_bar, theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(
+        title="Convert CSV → NLI JSON", css=side_bar, theme=gr.themes.Soft()
+    ) as demo:
         gr.HTML(nav_tag)
-        gr.Markdown("### CSV → Our NLI format\nUpload a CSV with columns **paragraph_1**, **paragraph_2**, and **output** (list of dicts with span_1/span_2/label).")
+        gr.Markdown(
+            "### CSV → Our NLI format\n"
+            "Upload a CSV with columns **paragraph_1**, **paragraph_2**, and **output** "
+            "(list of dicts with span_1/span_2/label[, reasoning])."
+        )
         with gr.Row():
-            csv_in = gr.File(label="Upload CSV", file_count="single", file_types=[".csv"])
+            csv_in = gr.File(
+                label="Upload CSV", file_count="single", file_types=[".csv"]
+            )
         with gr.Accordion("Advanced", open=False):
             label_map_text = gr.Textbox(
                 label="Label mapping (CSV→NLI)",
                 value="equivalent=entailment, contradiction=contradiction, addition=neutral",
             )
-            keep_reasoning = gr.Checkbox(value=True, label="Keep 'reasoning' in output as 'explanation'")
+            keep_reasoning = gr.Checkbox(
+                value=True, label="Keep 'reasoning' in output as 'explanation'"
+            )
         convert_btn = gr.Button("Convert", variant="primary")
-        download = gr.File(label="Download converted JSON", interactive=False)
-        out_file = gr.Textbox(label="Saved file path", interactive=False)
+
+        # DownloadButton (expects a *file path* on your Gradio version)
+        download = gr.DownloadButton(label="Download converted JSON", visible=False)
         preview = gr.Code(label="Preview (first 2 items)", language="json")
 
-        def _run_and_pack(csv_file, label_map_text, keep_reasoning):
-            path, preview_text = _convert(csv_file, label_map_text, keep_reasoning)
-            return path, path, preview_text
-
-        convert_btn.click(_run_and_pack, inputs=[csv_in, label_map_text, keep_reasoning], outputs=[download, out_file, preview])
+        convert_btn.click(
+            _convert_tmp,
+            inputs=[csv_in, label_map_text, keep_reasoning],
+            outputs=[download, preview],
+        )
     return demo
+
 
 demo = build_demo()

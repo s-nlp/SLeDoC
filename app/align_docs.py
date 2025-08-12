@@ -1,7 +1,5 @@
-
 from __future__ import annotations
 
-import io
 import json
 import re
 from dataclasses import dataclass
@@ -25,9 +23,14 @@ def get_paragraphs_from_docx(docx_path: str | Path) -> List[str]:
     paragraphs = []
 
     for part in doc.part._package.parts:
-        if part.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml":
+        if (
+            part.content_type
+            == "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+        ):
             tree = etree.fromstring(part.blob)
-            namespaces = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+            namespaces = {
+                "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            }
             for para in tree.xpath(".//w:p", namespaces=namespaces):
                 texts = para.xpath(".//w:t", namespaces=namespaces)
                 full_text = "".join([t.text for t in texts if t.text])
@@ -91,11 +94,19 @@ class Encoder:
         return cls(tok, mdl, device)
 
     @torch.no_grad()
-    def encode(self, texts: List[str], batch_size: int = 64, prefix: str = "query:") -> torch.Tensor:
+    def encode(
+        self, texts: List[str], batch_size: int = 64, prefix: str = "query:"
+    ) -> torch.Tensor:
         out = []
         for i in range(0, len(texts), batch_size):
             batch = [f"{prefix} {t}" for t in texts[i : i + batch_size]]
-            enc = self.tok(batch, return_tensors="pt", padding=True, truncation=True, max_length=512).to(self.device)
+            enc = self.tok(
+                batch,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=512,
+            ).to(self.device)
             model_out = self.mdl(**enc)
             emb = average_pool(model_out.last_hidden_state, enc["attention_mask"])
             # normalize (cosine sim = dot product)
@@ -155,14 +166,21 @@ def _align(doc1, doc2, model_id, device, batch_size, window_size, threshold):
     p2 = Path(doc2.name if hasattr(doc2, "name") else doc2)
 
     paragraphs_a = merge_incomplete_sentences(get_paragraphs_from_docx(p1))
-    paragraphs_b = filter_non_russian(separate_points(merge_incomplete_sentences(get_paragraphs_from_docx(p2))))
+    paragraphs_b = filter_non_russian(
+        separate_points(merge_incomplete_sentences(get_paragraphs_from_docx(p2)))
+    )
 
     enc = Encoder.load(model_id=model_id, device=device)
     emb_a = enc.encode(paragraphs_a, batch_size=batch_size)
     emb_b = enc.encode(paragraphs_b, batch_size=batch_size)
 
     matches = find_best_matches_with_window(
-        paragraphs_a, paragraphs_b, emb_a, emb_b, window_size=window_size, threshold=threshold
+        paragraphs_a,
+        paragraphs_b,
+        emb_a,
+        emb_b,
+        window_size=window_size,
+        threshold=threshold,
     )
 
     data = build_output_json(paragraphs_a, paragraphs_b, matches)
@@ -175,12 +193,17 @@ def _align(doc1, doc2, model_id, device, batch_size, window_size, threshold):
     preview = json.dumps(data[:5], ensure_ascii=False, indent=2)
     return str(out_path), preview
 
+
 def build_demo():
-    with gr.Blocks(title="Step‑0: Align documents", css=side_bar, theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(
+        title="Step‑0: Align documents", css=side_bar, theme=gr.themes.Soft()
+    ) as demo:
         gr.HTML(nav_tag)
-        gr.Markdown("### Step‑0 · Align documents (.docx → pairs JSON)\n"
-                    "Upload two DOCX files. We'll align their paragraphs using multilingual-e5 embeddings "
-                    "and save a JSON list of `{paragraph_1, paragraph_2}` for Stage‑1 (Claims).")
+        gr.Markdown(
+            "### Step‑0 · Align documents (.docx → pairs JSON)\n"
+            "Upload two DOCX files. We'll align their paragraphs using multilingual-e5 embeddings "
+            "and save a JSON list of `{paragraph_1, paragraph_2}` for Stage‑1 (Claims)."
+        )
         with gr.Row():
             doc1 = gr.File(label="Document A (.docx)", file_types=[".docx"])
             doc2 = gr.File(label="Document B (.docx)", file_types=[".docx"])
@@ -197,12 +220,19 @@ def build_demo():
         with gr.Row():
             batch_size = gr.Slider(8, 128, value=64, step=8, label="Batch size")
             window_size = gr.Slider(5, 200, value=50, step=5, label="Window size")
-            threshold = gr.Slider(0.5, 0.99, value=0.90, step=0.01, label="Similarity threshold")
+            threshold = gr.Slider(
+                0.5, 0.99, value=0.90, step=0.01, label="Similarity threshold"
+            )
         run_btn = gr.Button("Compute alignment", variant="primary")
         out_path = gr.Textbox(label="Saved JSON file", interactive=False)
         preview = gr.Code(label="Preview (first 5 pairs)", language="json")
 
-        run_btn.click(_align, inputs=[doc1, doc2, model_id, device, batch_size, window_size, threshold], outputs=[out_path, preview])
+        run_btn.click(
+            _align,
+            inputs=[doc1, doc2, model_id, device, batch_size, window_size, threshold],
+            outputs=[out_path, preview],
+        )
     return demo
+
 
 demo = build_demo()

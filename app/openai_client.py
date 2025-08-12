@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 import os
+
 import openai
 
 _OPENROUTER_BASE = "https://openrouter.ai/api/v1"

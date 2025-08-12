@@ -5,9 +5,9 @@ Fix 2025‑08‑01
 * `load_pairs()` now understands **both** output formats produced by the
   earlier NLI stage:
 
-  1. **Flat list** of pair‑dicts (already handled)  
+  1. **Flat list** of pair‑dicts (already handled)
   2. List (or single dict) where each element owns a key `"nli_results"`
-     that itself contains the list of pair‑dicts.  
+     that itself contains the list of pair‑dicts.
 
   The helper now *flattens* such nested files, so `pairs[i]` always has
   the keys `premise_raw` & `hypothesis_raw`, eliminating the `KeyError` you
@@ -29,6 +29,7 @@ import gradio as gr
 # ---------------------------------------------------------------------------
 #  Helpers
 # ---------------------------------------------------------------------------
+
 
 def _flatten_nli_container(obj) -> List[dict]:
     """Return a flat list of NLI pair‑dicts from *obj* if possible."""
@@ -87,15 +88,14 @@ def _make_temp_file(text: str) -> str:
 #  Gradio callbacks
 # ---------------------------------------------------------------------------
 
+
 def choose(
     choice: str,  # "left" | "right" | "skip"
     pairs: List[dict],
     idx: int,
     seen: Set[str],
     final: List[str],
-) -> Tuple[
-    str, str, str, str, int, Set[str], List[str]
-]:
+) -> Tuple[str, str, str, str, int, Set[str], List[str]]:
     """Handle the user choice and advance to the next pair."""
 
     # If no valid index (finished)
@@ -104,7 +104,11 @@ def choose(
 
     # Record the selection
     if choice in {"left", "right"}:
-        selected = pairs[idx]["premise_raw"] if choice == "left" else pairs[idx]["hypothesis_raw"]
+        selected = (
+            pairs[idx]["premise_raw"]
+            if choice == "left"
+            else pairs[idx]["hypothesis_raw"]
+        )
         final.append(selected)
         seen.update({pairs[idx]["premise_raw"], pairs[idx]["hypothesis_raw"]})
 
@@ -114,7 +118,8 @@ def choose(
         # No more pairs – finished
         return (
             "✓ Done – no more spans",
-            "", "",
+            "",
+            "",
             " ".join(final),
             -1,
             seen,
@@ -187,8 +192,8 @@ with gr.Blocks() as demo:
             set(),
             [],
             f"Label: {p['label']} │ Confidence: {p['confidence']:.3f}",
-            _preview_html(p['premise_raw']),
-            _preview_html(p['hypothesis_raw']),
+            _preview_html(p["premise_raw"]),
+            _preview_html(p["hypothesis_raw"]),
             "",
             first_idx,
         )

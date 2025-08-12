@@ -7,7 +7,6 @@ from typing import Any, Dict, List
 
 import openai
 from dotenv import load_dotenv
-from openai import OpenAI
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -15,6 +14,8 @@ from tenacity import (
     wait_random_exponential,
 )
 from tqdm import tqdm
+
+from app.openai_client import make_client
 
 load_dotenv()
 
@@ -44,8 +45,6 @@ DEFAULT_SYSTEM_PROMPT = """Ты — юридический аналитик, к�
     "claim": <Переписанное утверждение>
   }
 ]"""
-
-from app.openai_client import make_client
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -122,7 +121,9 @@ def run_claim_extraction(
 
     input_path = Path(input_path)
     if output_path is None:
-        output_path = input_path.with_name(f"{input_path.stem}_claims{input_path.suffix}")
+        output_path = input_path.with_name(
+            f"{input_path.stem}_claims{input_path.suffix}"
+        )
     output_path = Path(output_path)
 
     with input_path.open("r", encoding="utf-8") as f:
