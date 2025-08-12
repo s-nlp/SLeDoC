@@ -21,6 +21,13 @@ app/ Python package
 ```
 
 ## Quick start (Docker)
+Перед любым запуском необходимо создать файл с кредами:
+`.env`:
+```bash
+OPENAI_API_KEY="sk-proj-"
+OPENROUTER_API_KEY="sk-or-"
+DEFAULT_MODEL="openrouter/mistral-7b"
+```
 
 ```bash
 # 1. build the image
