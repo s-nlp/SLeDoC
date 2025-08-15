@@ -1,32 +1,38 @@
-
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
-from typing import List, Set, Tuple
 
 import gradio as gr
 
 # Stage 0
 from app.align_docs import (
+    Encoder,
+    build_output_json,
+    filter_non_russian,
+    find_best_matches_with_window,
     get_paragraphs_from_docx,
     merge_incomplete_sentences,
     separate_points,
-    filter_non_russian,
-    Encoder,
-    find_best_matches_with_window,
-    build_output_json,
 )
-import tempfile
+
 # Stage 1
-from app.claim_extractor import run_claim_extraction, DEFAULT_SYSTEM_PROMPT
+from app.claim_extractor import DEFAULT_SYSTEM_PROMPT, run_claim_extraction
+
+# Stage 3 building blocks
+from app.combine_pairs import (
+    _load_pairs,
+    _next_valid_idx,
+    _preview_html,
+    choose,
+    download,
+)
+
 # Stage 2
 from app.nli_predict import _list_models, run_nli_file
-# Stage 3 building blocks
-from app.combine_pairs import _load_pairs, _next_valid_idx, _preview_html, choose, download
 
 from .settings import nav_tag, side_bar
-
 
 
 def _align_stage0(doc1, doc2, model_id, device, batch_size, window_size, threshold):
@@ -47,7 +53,12 @@ def _align_stage0(doc1, doc2, model_id, device, batch_size, window_size, thresho
 
     # Match windows
     matches = find_best_matches_with_window(
-        emb_a, emb_b, paragraphs_a, paragraphs_b, window_size=int(window_size), threshold=float(threshold)
+        emb_a,
+        emb_b,
+        paragraphs_a,
+        paragraphs_b,
+        window_size=int(window_size),
+        threshold=float(threshold),
     )
 
     data = build_output_json(paragraphs_a, paragraphs_b, matches)
@@ -55,11 +66,19 @@ def _align_stage0(doc1, doc2, model_id, device, batch_size, window_size, thresho
     # Save to temp file (user-downloadable, not in example_data)
     tmpdir = Path(tempfile.mkdtemp())
     out_path = tmpdir / "paragraphs_aligned.json"
-    out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     # Return path and a tiny preview string
-    preview = json.dumps(data[:5], ensure_ascii=False, indent=2) if isinstance(data, list) else ""
+    preview = (
+        json.dumps(data[:5], ensure_ascii=False, indent=2)
+        if isinstance(data, list)
+        else ""
+    )
     return str(out_path), preview
+
+
 EXTRA_CSS = """
 .progress-grid { display:grid; grid-template-columns: 28px 1fr; gap:10px; align-items:center; }
 .stage-dot{ width:18px; height:18px; border-radius:99px; background:#777; }
@@ -67,6 +86,7 @@ EXTRA_CSS = """
 .stage-dot.run{ background:#f59e0b; }   /* amber */
 .stage-title{ font-weight:700; }
 """
+
 
 def _stage_status(stage: int) -> str:
     labels = [
@@ -86,10 +106,18 @@ def _stage_status(stage: int) -> str:
     html.append("</div>")
     return "\\n".join(html)
 
+
 def _run_all(
-    doc1, doc2,
-    embed_model, device, batch_size, window_size, threshold,
-    system_prompt, llm_model, llm_temp,
+    doc1,
+    doc2,
+    embed_model,
+    device,
+    batch_size,
+    window_size,
+    threshold,
+    system_prompt,
+    llm_model,
+    llm_temp,
     nli_model,
     progress=gr.Progress(track_tqdm=True),
 ):
@@ -98,7 +126,13 @@ def _run_all(
         raise gr.Error("Please upload *both* .docx files.")
     progress(0.02, desc="Loading & encoding documents")
     out_path_align, _preview = _align_stage0(
-        doc1, doc2, embed_model, device, int(batch_size), int(window_size), float(threshold)
+        doc1,
+        doc2,
+        embed_model,
+        device,
+        int(batch_size),
+        int(window_size),
+        float(threshold),
     )
     status0 = _stage_status(1)
 
@@ -132,9 +166,17 @@ def _run_all(
         str(out_path_align),
         str(claims_path),
         str(nli_json_path),
-        status0, status1, status2,
-        pairs, idx0, set(), [],   # states
-        label, left, right, final_preview,
+        status0,
+        status1,
+        status2,
+        pairs,
+        idx0,
+        set(),
+        [],  # states
+        label,
+        left,
+        right,
+        final_preview,
     )
 
 
@@ -155,16 +197,26 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
                         "intfloat/multilingual-e5-base",
                     ],
                     value="intfloat/multilingual-e5-large",
-                    label="Embedding model"
+                    label="Embedding model",
                 )
-                device = gr.Dropdown(choices=["cpu","cuda"], value="cpu", label="Device")
+                device = gr.Dropdown(
+                    choices=["cpu", "cuda"], value="cpu", label="Device"
+                )
                 batch_size = gr.Slider(8, 128, value=64, step=8, label="Batch size")
                 window_size = gr.Slider(5, 200, value=50, step=5, label="Window size")
-                threshold = gr.Slider(0.5, 0.99, value=0.90, step=0.01, label="Similarity threshold")
+                threshold = gr.Slider(
+                    0.5, 0.99, value=0.90, step=0.01, label="Similarity threshold"
+                )
             with gr.Accordion("Claim extraction (LLM)", open=False):
-                system_prompt = gr.Textbox(value=DEFAULT_SYSTEM_PROMPT, label="System prompt", lines=10)
-                llm_model = gr.Textbox(value="gpt-4o", label="Model name (OpenAI/OpenRouter alias)")
-                llm_temp = gr.Slider(0.0, 1.0, value=0.2, step=0.05, label="Temperature")
+                system_prompt = gr.Textbox(
+                    value=DEFAULT_SYSTEM_PROMPT, label="System prompt", lines=10
+                )
+                llm_model = gr.Textbox(
+                    value="gpt-4o", label="Model name (OpenAI/OpenRouter alias)"
+                )
+                llm_temp = gr.Slider(
+                    0.0, 1.0, value=0.2, step=0.05, label="Temperature"
+                )
             with gr.Accordion("NLI model", open=False):
                 nli_model = gr.Dropdown(
                     label="Local NLI model",
@@ -211,12 +263,35 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
 
     run_btn.click(
         fn=_run_all,
-        inputs=[doc1, doc2, embed_model, device, batch_size, window_size, threshold, system_prompt, llm_model, llm_temp, nli_model],
+        inputs=[
+            doc1,
+            doc2,
+            embed_model,
+            device,
+            batch_size,
+            window_size,
+            threshold,
+            system_prompt,
+            llm_model,
+            llm_temp,
+            nli_model,
+        ],
         outputs=[
-            align_out_file, align_out, claims_out, nli_out,
-            stage0, stage1, stage2,
-            pairs_state, idx_state, seen_state, final_state,
-            label_md, left_html, right_html, final_preview,
+            align_out_file,
+            align_out,
+            claims_out,
+            nli_out,
+            stage0,
+            stage1,
+            stage2,
+            pairs_state,
+            idx_state,
+            seen_state,
+            final_state,
+            label_md,
+            left_html,
+            right_html,
+            final_preview,
         ],
         show_progress=True,
     )
@@ -226,21 +301,46 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
         return choose(choice, pairs, idx, seen, final)
 
     left_btn.click(
-        _wrap_choice, inputs=[gr.State("left"), pairs_state, idx_state, seen_state, final_state],
-        outputs=[label_md, left_html, right_html, final_preview, idx_state, seen_state, final_state],
+        _wrap_choice,
+        inputs=[gr.State("left"), pairs_state, idx_state, seen_state, final_state],
+        outputs=[
+            label_md,
+            left_html,
+            right_html,
+            final_preview,
+            idx_state,
+            seen_state,
+            final_state,
+        ],
     )
     right_btn.click(
-        _wrap_choice, inputs=[gr.State("right"), pairs_state, idx_state, seen_state, final_state],
-        outputs=[label_md, left_html, right_html, final_preview, idx_state, seen_state, final_state],
+        _wrap_choice,
+        inputs=[gr.State("right"), pairs_state, idx_state, seen_state, final_state],
+        outputs=[
+            label_md,
+            left_html,
+            right_html,
+            final_preview,
+            idx_state,
+            seen_state,
+            final_state,
+        ],
     )
     skip_btn.click(
-        _wrap_choice, inputs=[gr.State("skip"), pairs_state, idx_state, seen_state, final_state],
-        outputs=[label_md, left_html, right_html, final_preview, idx_state, seen_state, final_state],
+        _wrap_choice,
+        inputs=[gr.State("skip"), pairs_state, idx_state, seen_state, final_state],
+        outputs=[
+            label_md,
+            left_html,
+            right_html,
+            final_preview,
+            idx_state,
+            seen_state,
+            final_state,
+        ],
     )
 
-    download_btn.click(
-        download, inputs=final_state, outputs=download_file
-    )
+    download_btn.click(download, inputs=final_state, outputs=download_file)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Tuple
@@ -184,14 +185,17 @@ def _align(doc1, doc2, model_id, device, batch_size, window_size, threshold):
     )
 
     data = build_output_json(paragraphs_a, paragraphs_b, matches)
-    out_path = Path("example_data") / "paragraphs_aligned.json"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
+    # Write to a writable temp dir (mirrors the Convert step behavior)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="aligned_pairs_"))
+    fname = f"aligned_{p1.stem}__{p2.stem}.json"
+    out_path = tmp_dir / fname
+    out_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     # Preview: show top 5
     preview = json.dumps(data[:5], ensure_ascii=False, indent=2)
-    return str(out_path), preview
+    # DownloadButton expects a *file path* and to be made visible
+    return gr.update(value=str(out_path), visible=True), preview
 
 
 def build_demo():
@@ -213,7 +217,7 @@ def build_demo():
                     "intfloat/multilingual-e5-large",
                     "intfloat/multilingual-e5-base",
                 ],
-                value="intfloat/multilingual-e5-large",
+                value="intfloat/multilingual-e5-base",
                 label="Embedding model",
             )
             device = gr.Dropdown(choices=["cpu", "cuda"], value="cpu", label="Device")
@@ -224,13 +228,13 @@ def build_demo():
                 0.5, 0.99, value=0.90, step=0.01, label="Similarity threshold"
             )
         run_btn = gr.Button("Compute alignment", variant="primary")
-        out_path = gr.Textbox(label="Saved JSON file", interactive=False)
+        download = gr.DownloadButton(label="Download aligned JSON", visible=False)
         preview = gr.Code(label="Preview (first 5 pairs)", language="json")
 
         run_btn.click(
             _align,
             inputs=[doc1, doc2, model_id, device, batch_size, window_size, threshold],
-            outputs=[out_path, preview],
+            outputs=[download, preview],
         )
     return demo
 

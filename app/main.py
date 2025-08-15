@@ -1,13 +1,14 @@
 import gradio as gr
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from app import align_docs as ad
 from app import convert_to_our_format as conv
+from app import full_pipeline as fp
 from app import nli
 from app import nli_predict as np
 from app import pipeline as mp
 from app import semantic_mismatch as sm
-from app import full_pipeline as fp
 
 app = FastAPI()
 
@@ -21,14 +22,14 @@ gr.mount_gradio_app(app, fp.demo, path="/full_pipeline", root_path="/full_pipeli
 gr.mount_gradio_app(app, mp.demo, path="/", root_path="/")
 
 
-from fastapi.responses import JSONResponse
-
 @app.get("/manifest.json")
 def manifest():
-    return JSONResponse({
-        "name": "Semantic Mismatch",
-        "short_name": "Mismatch",
-        "display": "standalone",
-        "start_url": "/",
-        "icons": []
-    })
+    return JSONResponse(
+        {
+            "name": "Semantic Mismatch",
+            "short_name": "Mismatch",
+            "display": "standalone",
+            "start_url": "/",
+            "icons": [],
+        }
+    )
