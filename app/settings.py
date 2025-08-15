@@ -61,5 +61,6 @@ nav_tag = """
     <a href="/mismatch/">Mismatch Viewer</a>
     <a href="/nli/">NLI Viewer</a>
     <a href="/convert/">Convert CSV</a>
+    <a href="/full_pipeline/">Full Pipeline</a>
 </div>
 """

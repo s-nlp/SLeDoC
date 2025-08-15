@@ -1,0 +1,247 @@
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import List, Set, Tuple
+
+import gradio as gr
+
+# Stage 0
+from app.align_docs import (
+    get_paragraphs_from_docx,
+    merge_incomplete_sentences,
+    separate_points,
+    filter_non_russian,
+    Encoder,
+    find_best_matches_with_window,
+    build_output_json,
+)
+import tempfile
+# Stage 1
+from app.claim_extractor import run_claim_extraction, DEFAULT_SYSTEM_PROMPT
+# Stage 2
+from app.nli_predict import _list_models, run_nli_file
+# Stage 3 building blocks
+from app.combine_pairs import _load_pairs, _next_valid_idx, _preview_html, choose, download
+
+from .settings import nav_tag, side_bar
+
+
+
+def _align_stage0(doc1, doc2, model_id, device, batch_size, window_size, threshold):
+    # Resolve paths (either file-like or path-like)
+    p1 = Path(doc1.name if hasattr(doc1, "name") else doc1)
+    p2 = Path(doc2.name if hasattr(doc2, "name") else doc2)
+
+    # Paragraph prep (same as align_docs)
+    paragraphs_a = merge_incomplete_sentences(get_paragraphs_from_docx(p1))
+    paragraphs_b = filter_non_russian(
+        separate_points(merge_incomplete_sentences(get_paragraphs_from_docx(p2)))
+    )
+
+    # Embeddings
+    enc = Encoder.load(model_id=model_id, device=device)
+    emb_a = enc.encode(paragraphs_a, batch_size=int(batch_size))
+    emb_b = enc.encode(paragraphs_b, batch_size=int(batch_size))
+
+    # Match windows
+    matches = find_best_matches_with_window(
+        emb_a, emb_b, paragraphs_a, paragraphs_b, window_size=int(window_size), threshold=float(threshold)
+    )
+
+    data = build_output_json(paragraphs_a, paragraphs_b, matches)
+
+    # Save to temp file (user-downloadable, not in example_data)
+    tmpdir = Path(tempfile.mkdtemp())
+    out_path = tmpdir / "paragraphs_aligned.json"
+    out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # Return path and a tiny preview string
+    preview = json.dumps(data[:5], ensure_ascii=False, indent=2) if isinstance(data, list) else ""
+    return str(out_path), preview
+EXTRA_CSS = """
+.progress-grid { display:grid; grid-template-columns: 28px 1fr; gap:10px; align-items:center; }
+.stage-dot{ width:18px; height:18px; border-radius:99px; background:#777; }
+.stage-dot.done{ background:#22c55e; }  /* green */
+.stage-dot.run{ background:#f59e0b; }   /* amber */
+.stage-title{ font-weight:700; }
+"""
+
+def _stage_status(stage: int) -> str:
+    labels = [
+        "0. Align docs",
+        "1. Extract claims",
+        "2. Compute NLI",
+        "3. Build final text",
+    ]
+    html = ["<div class='progress-grid'>"]
+    for i, lbl in enumerate(labels):
+        cls = "stage-dot"
+        if i < stage:
+            cls += " done"
+        elif i == stage:
+            cls += " run"
+        html.append(f"<div class='{cls}'></div><div class='stage-title'>{lbl}</div>")
+    html.append("</div>")
+    return "\\n".join(html)
+
+def _run_all(
+    doc1, doc2,
+    embed_model, device, batch_size, window_size, threshold,
+    system_prompt, llm_model, llm_temp,
+    nli_model,
+    progress=gr.Progress(track_tqdm=True),
+):
+    # 0 -> Align
+    if not (doc1 and doc2):
+        raise gr.Error("Please upload *both* .docx files.")
+    progress(0.02, desc="Loading & encoding documents")
+    out_path_align, _preview = _align_stage0(
+        doc1, doc2, embed_model, device, int(batch_size), int(window_size), float(threshold)
+    )
+    status0 = _stage_status(1)
+
+    # 1 -> Extract claims
+    progress(0.35, desc="Extracting claims with LLM")
+    claims_path = run_claim_extraction(
+        input_path=out_path_align,
+        system_prompt=system_prompt,
+        model_name=llm_model,
+        temperature=float(llm_temp),
+    )
+    status1 = _stage_status(2)
+
+    # 2 -> Compute NLI
+    progress(0.65, desc="Running NLI over claim pairs")
+    with open(claims_path, "rb") as f:
+        nli_json_path = run_nli_file(nli_model, f)
+    status2 = _stage_status(3)
+
+    # 3 -> Prepare interactive combiner
+    pairs = _load_pairs(nli_json_path)
+    idx0 = _next_valid_idx(pairs, 0, set()) or -1
+    label = "—" if idx0 == -1 else f"Ready • {len(pairs)} pairs"
+    left = "" if idx0 == -1 else _preview_html(pairs[idx0]["premise_raw"])
+    right = "" if idx0 == -1 else _preview_html(pairs[idx0]["hypothesis_raw"])
+    final_preview = ""
+
+    progress(0.98, desc="Ready")
+    return (
+        str(out_path_align),  # file for download
+        str(out_path_align),
+        str(claims_path),
+        str(nli_json_path),
+        status0, status1, status2,
+        pairs, idx0, set(), [],   # states
+        label, left, right, final_preview,
+    )
+
+
+with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
+    gr.HTML(nav_tag)
+
+    gr.Markdown("## Full Pipeline")
+
+    with gr.Row():
+        with gr.Column(scale=2):
+            gr.Markdown("**Upload documents** (.docx)")
+            doc1 = gr.File(label="Document A", file_types=[".docx"])
+            doc2 = gr.File(label="Document B", file_types=[".docx"])
+            with gr.Accordion("Embedding settings", open=False):
+                embed_model = gr.Dropdown(
+                    choices=[
+                        "intfloat/multilingual-e5-large",
+                        "intfloat/multilingual-e5-base",
+                    ],
+                    value="intfloat/multilingual-e5-large",
+                    label="Embedding model"
+                )
+                device = gr.Dropdown(choices=["cpu","cuda"], value="cpu", label="Device")
+                batch_size = gr.Slider(8, 128, value=64, step=8, label="Batch size")
+                window_size = gr.Slider(5, 200, value=50, step=5, label="Window size")
+                threshold = gr.Slider(0.5, 0.99, value=0.90, step=0.01, label="Similarity threshold")
+            with gr.Accordion("Claim extraction (LLM)", open=False):
+                system_prompt = gr.Textbox(value=DEFAULT_SYSTEM_PROMPT, label="System prompt", lines=10)
+                llm_model = gr.Textbox(value="gpt-4o", label="Model name (OpenAI/OpenRouter alias)")
+                llm_temp = gr.Slider(0.0, 1.0, value=0.2, step=0.05, label="Temperature")
+            with gr.Accordion("NLI model", open=False):
+                nli_model = gr.Dropdown(
+                    label="Local NLI model",
+                    choices=_list_models(),
+                    value=_list_models()[0] if _list_models() else None,
+                )
+
+            run_btn = gr.Button("Run full pipeline", variant="primary")
+
+            gr.Markdown("**Artifacts**")
+            align_out_file = gr.File(label="Aligned JSON (download)", interactive=False)
+            align_out = gr.Textbox(label="Aligned pairs JSON (path)", interactive=False)
+            claims_out = gr.Textbox(label="Claims JSON (path)", interactive=False)
+            nli_out = gr.Textbox(label="NLI JSON (path)", interactive=False)
+
+        with gr.Column(scale=1):
+            gr.Markdown("**3. Build final text**")
+
+            # States used by the chooser
+            pairs_state = gr.State([])
+            idx_state = gr.State(-1)
+            seen_state = gr.State(set())
+            final_state = gr.State([])
+
+            label_md = gr.Markdown("—")
+            with gr.Row():
+                left_html = gr.HTML("")
+                right_html = gr.HTML("")
+            final_preview = gr.Textbox(label="Accumulated text", lines=8)
+
+            with gr.Row():
+                left_btn = gr.Button("⬅️ Choose left")
+                skip_btn = gr.Button("Skip")
+                right_btn = gr.Button("Choose right ➡️")
+            download_btn = gr.Button("⬇️ Download final text")
+            download_file = gr.File(label="final_text.txt", interactive=False)
+
+    # --- bottom progress ---
+    gr.Markdown("---")
+    gr.Markdown("**Progress**")
+    stage0 = gr.HTML(_stage_status(0))
+    stage1 = gr.HTML("")
+    stage2 = gr.HTML("")
+
+    run_btn.click(
+        fn=_run_all,
+        inputs=[doc1, doc2, embed_model, device, batch_size, window_size, threshold, system_prompt, llm_model, llm_temp, nli_model],
+        outputs=[
+            align_out_file, align_out, claims_out, nli_out,
+            stage0, stage1, stage2,
+            pairs_state, idx_state, seen_state, final_state,
+            label_md, left_html, right_html, final_preview,
+        ],
+        show_progress=True,
+    )
+
+    # Hook up the chooser controls
+    def _wrap_choice(choice, pairs, idx, seen, final):
+        return choose(choice, pairs, idx, seen, final)
+
+    left_btn.click(
+        _wrap_choice, inputs=[gr.State("left"), pairs_state, idx_state, seen_state, final_state],
+        outputs=[label_md, left_html, right_html, final_preview, idx_state, seen_state, final_state],
+    )
+    right_btn.click(
+        _wrap_choice, inputs=[gr.State("right"), pairs_state, idx_state, seen_state, final_state],
+        outputs=[label_md, left_html, right_html, final_preview, idx_state, seen_state, final_state],
+    )
+    skip_btn.click(
+        _wrap_choice, inputs=[gr.State("skip"), pairs_state, idx_state, seen_state, final_state],
+        outputs=[label_md, left_html, right_html, final_preview, idx_state, seen_state, final_state],
+    )
+
+    download_btn.click(
+        download, inputs=final_state, outputs=download_file
+    )
+
+
+if __name__ == "__main__":
+    demo.queue(concurrency_count=2).launch(show_error=True)
