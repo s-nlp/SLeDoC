@@ -53,10 +53,10 @@ def _align_stage0(doc1, doc2, model_id, device, batch_size, window_size, thresho
 
     # Match windows
     matches = find_best_matches_with_window(
-        emb_a,
-        emb_b,
-        paragraphs_a,
-        paragraphs_b,
+        paragraphs=paragraphs_a,
+        paragraphs_bi=paragraphs_b,
+        paragraphs_embs=emb_a,
+        paragraphs_bi_embs=emb_b,
         window_size=int(window_size),
         threshold=float(threshold),
     )

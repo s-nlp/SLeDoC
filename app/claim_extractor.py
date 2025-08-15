@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+os.environ['TOKENIZERS_PARALLELISM'] = "True"
 from pathlib import Path
 from typing import Any, Dict, List
 
