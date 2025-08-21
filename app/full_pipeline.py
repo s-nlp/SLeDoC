@@ -197,7 +197,7 @@ def _run_all(
         progress_html,  # 5 progress HTML
         [],  # 6 pairs (state)
         -1,  # 7 idx (state)
-        set(),  # 8 seen (state)
+        [],  # 8 seen (state)
         [],  # 9 final_state (state)
         "—",  # 10 label (markdown)
         "",  # 11 left html
@@ -224,7 +224,7 @@ def _run_all(
         progress_html,
         [],  # pairs
         -1,  # idx
-        set(),  # seen
+        [],  # seen
         [],  # final_state
         "—",
         "",
@@ -264,7 +264,7 @@ def _run_all(
         progress_html,
         pairs,  # <-- normalized pairs go into state
         idx0,
-        set(),  # seen starts empty
+        [],  # seen starts empty
         [],  # final_state
         label,
         left,
@@ -326,7 +326,7 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
             # States used by the chooser
             pairs_state = gr.State([])
             idx_state = gr.State(-1)
-            seen_state = gr.State(set())
+            seen_state = gr.State([])
             final_state = gr.State([])
 
             label_md = gr.Markdown("—")

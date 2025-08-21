@@ -1,22 +1,3 @@
-"""Interactive ‘choose-your-span’ stage (Stage 3).
-
-Fix 2025‑08‑01
-----------------
-* `load_pairs()` now understands **both** output formats produced by the
-  earlier NLI stage:
-
-  1. **Flat list** of pair‑dicts (already handled)
-  2. List (or single dict) where each element owns a key `"nli_results"`
-     that itself contains the list of pair‑dicts.
-
-  The helper now *flattens* such nested files, so `pairs[i]` always has
-  the keys `premise_raw` & `hypothesis_raw`, eliminating the `KeyError` you
-  observed.
-
-Usage remains identical – just replace the old `app/combine_pairs.py` with
-this one or `git pull` if you track the repo.
-"""
-
 from __future__ import annotations
 
 import json
@@ -93,11 +74,11 @@ def choose(
     choice: str,  # "left" | "right" | "skip"
     pairs: List[dict],
     idx: int,
-    seen: Set[str],
+    seen: List[str],
     final: List[str],
 ) -> Tuple[str, str, str, str, int, Set[str], List[str]]:
     """Handle the user choice and advance to the next pair."""
-
+    seen = set(seen or [])
     # If no valid index (finished)
     if idx == -1:
         return "—", "", "", "\n\n".join(final), -1, seen, final
@@ -122,18 +103,23 @@ def choose(
             "",
             " ".join(final),
             -1,
-            seen,
+            list(seen),
             final,
         )
 
     pair = pairs[next_idx]
+    lbl = pair.get("label", "—")
+    conf = pair.get("confidence")
+    label_text = (
+        f"Label: {lbl}" if conf is None else f"Label: {lbl} │ Confidence: {conf:.3f}"
+    )
     return (
-        f"Label: {pair['label']} │ Confidence: {pair['confidence']:.3f}",
+        label_text,
         _preview_html(pair["premise_raw"]),
         _preview_html(pair["hypothesis_raw"]),
         " ".join(final),
         next_idx,
-        seen,
+        list(seen),
         final,
     )
 
@@ -153,7 +139,7 @@ with gr.Blocks() as demo:
 
     pairs_state = gr.State([])
     idx_state = gr.State(-1)
-    seen_state = gr.State(set())
+    seen_state = gr.State([])
     final_state = gr.State([])
 
     # 1 · Upload JSON from the NLI stage -------------------------------------
