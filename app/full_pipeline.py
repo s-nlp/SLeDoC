@@ -80,13 +80,22 @@ def _align_stage0(doc1, doc2, model_id, device, batch_size, window_size, thresho
 
 
 def _pick_side(d, left: bool = True) -> str:
-    keys = (["premise_raw","premise","paragraph_1","claim_left","text_left"]
-            if left else
-            ["hypothesis_raw","hypothesis","paragraph_2","claim_right","text_right"])
+    keys = (
+        ["premise_raw", "premise", "paragraph_1", "claim_left", "text_left"]
+        if left
+        else [
+            "hypothesis_raw",
+            "hypothesis",
+            "paragraph_2",
+            "claim_right",
+            "text_right",
+        ]
+    )
     for k in keys:
         if k in d and d[k]:
             return d[k]
     return ""
+
 
 def _normalize_pairs(pairs: list[dict]) -> list[dict]:
     norm = []
@@ -97,6 +106,7 @@ def _normalize_pairs(pairs: list[dict]) -> list[dict]:
             p = {**p, "hypothesis_raw": _pick_side(p, False)}
         norm.append(p)
     return norm
+
 
 def _safe_load_pairs(nli_json_path: str) -> list[dict]:
     with open(nli_json_path, "r", encoding="utf-8") as f:
@@ -182,17 +192,17 @@ def _run_all(
     yield (
         str(out_path_align),  # 1 file (download)
         str(out_path_align),  # 2 aligned path
-        "",                   # 3 claims path (not ready)
-        "",                   # 4 nli path (not ready)
-        progress_html,        # 5 progress HTML
-        [],                   # 6 pairs (state)
-        -1,                   # 7 idx (state)
-        set(),                # 8 seen (state)
-        [],                   # 9 final_state (state)
-        "—",                  # 10 label (markdown)
-        "",                   # 11 left html
-        "",                   # 12 right html
-        "",                   # 13 final preview
+        "",  # 3 claims path (not ready)
+        "",  # 4 nli path (not ready)
+        progress_html,  # 5 progress HTML
+        [],  # 6 pairs (state)
+        -1,  # 7 idx (state)
+        set(),  # 8 seen (state)
+        [],  # 9 final_state (state)
+        "—",  # 10 label (markdown)
+        "",  # 11 left html
+        "",  # 12 right html
+        "",  # 13 final preview
     )
 
     # ===== 1) Extract claims =====
@@ -210,12 +220,12 @@ def _run_all(
         str(out_path_align),
         str(out_path_align),
         str(claims_path),
-        "",                   # NLI not ready yet
+        "",  # NLI not ready yet
         progress_html,
-        [],                   # pairs
-        -1,                   # idx
-        set(),                # seen
-        [],                   # final_state
+        [],  # pairs
+        -1,  # idx
+        set(),  # seen
+        [],  # final_state
         "—",
         "",
         "",
@@ -232,12 +242,14 @@ def _run_all(
     raw_pairs = _safe_load_pairs(nli_json_path)
     pairs = _normalize_pairs(raw_pairs)
 
-    print(f"[Combiner] pairs={len(pairs)}; keys0={list(pairs[0].keys()) if pairs else '—'}")
+    print(
+        f"[Combiner] pairs={len(pairs)}; keys0={list(pairs[0].keys()) if pairs else '—'}"
+    )
 
     # show the first pair if any; don't over-filter here
     idx0 = 0 if pairs else -1
     label = "No aligned pairs" if idx0 == -1 else f"Ready • {len(pairs)} pairs"
-    left  = "" if idx0 == -1 else _preview_html(pairs[idx0]["premise_raw"])
+    left = "" if idx0 == -1 else _preview_html(pairs[idx0]["premise_raw"])
     right = "" if idx0 == -1 else _preview_html(pairs[idx0]["hypothesis_raw"])
     final_preview = ""
 
@@ -250,10 +262,10 @@ def _run_all(
         str(claims_path),
         str(nli_json_path),
         progress_html,
-        pairs,       # <-- normalized pairs go into state
+        pairs,  # <-- normalized pairs go into state
         idx0,
-        set(),       # seen starts empty
-        [],          # final_state
+        set(),  # seen starts empty
+        [],  # final_state
         label,
         left,
         right,
@@ -277,7 +289,7 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
                         "intfloat/multilingual-e5-large",
                         "intfloat/multilingual-e5-base",
                     ],
-                    value="intfloat/multilingual-e5-large",
+                    value="intfloat/multilingual-e5-base",
                     label="Embedding model",
                 )
                 device = gr.Dropdown(
@@ -307,12 +319,7 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
 
             run_btn = gr.Button("Run full pipeline", variant="primary")
 
-            gr.Markdown("**Artifacts**")
-            align_out_file = gr.File(label="Aligned JSON (download)", interactive=False)
-            align_out = gr.Textbox(label="Aligned pairs JSON (path)", interactive=False)
-            claims_out = gr.Textbox(label="Claims JSON (path)", interactive=False)
-            nli_out = gr.Textbox(label="NLI JSON (path)", interactive=False)
-
+    with gr.Row():
         with gr.Column(scale=1):
             gr.Markdown("**3. Build final text**")
 
@@ -326,22 +333,26 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
             with gr.Row():
                 left_html = gr.HTML("")
                 right_html = gr.HTML("")
-            final_preview = gr.Textbox(label="Accumulated text", lines=8)
-
             with gr.Row():
                 left_btn = gr.Button("⬅️ Choose left")
                 skip_btn = gr.Button("Skip")
                 right_btn = gr.Button("Choose right ➡️")
+
+            # ↓↓↓ move the box here, full width
+            final_preview = gr.Textbox(label="Accumulated text", lines=8)
             download_btn = gr.Button("⬇️ Download final text")
             download_file = gr.File(label="final_text.txt", interactive=False)
 
     # --- bottom progress ---
     gr.Markdown("---")
     gr.Markdown("**Progress**")
-    # stage0 = gr.HTML(_stage_status(0))
-    # stage1 = gr.HTML("")
-    # stage2 = gr.HTML("")
     progress_html = gr.HTML(_stage_status(0))
+
+    gr.Markdown("**Artifacts**")
+    align_out_file = gr.File(label="Aligned JSON (download)", interactive=False)
+    align_out = gr.Textbox(label="Aligned pairs JSON (path)", interactive=False)
+    claims_out = gr.Textbox(label="Claims JSON (path)", interactive=False)
+    nli_out = gr.Textbox(label="NLI JSON (path)", interactive=False)
 
     run_btn.click(
         fn=_run_all,

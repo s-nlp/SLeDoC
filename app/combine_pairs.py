@@ -100,7 +100,7 @@ def choose(
 
     # If no valid index (finished)
     if idx == -1:
-        return "—", "", "", " ".join(final), -1, seen, final
+        return "—", "", "", "\n\n".join(final), -1, seen, final
 
     # Record the selection
     if choice in {"left", "right"}:
@@ -109,8 +109,8 @@ def choose(
             if choice == "left"
             else pairs[idx]["hypothesis_raw"]
         )
-        final.append(selected)
-        seen.update({pairs[idx]["premise_raw"], pairs[idx]["hypothesis_raw"]})
+        final = [*final, selected]
+        seen = set(seen) | {pairs[idx]["premise_raw"], pairs[idx]["hypothesis_raw"]}
 
     # Compute next index
     next_idx = _next_valid_idx(pairs, idx + 1, seen)
