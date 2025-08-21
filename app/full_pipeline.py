@@ -104,7 +104,7 @@ def _stage_status(stage: int) -> str:
             cls += " run"
         html.append(f"<div class='{cls}'></div><div class='stage-title'>{lbl}</div>")
     html.append("</div>")
-    return "\\n".join(html)
+    return "\n".join(html)
 
 
 def _run_all(
@@ -121,9 +121,24 @@ def _run_all(
     nli_model,
     progress=gr.Progress(track_tqdm=True),
 ):
-    # 0 -> Align
     if not (doc1 and doc2):
         raise gr.Error("Please upload *both* .docx files.")
+
+    # placeholders so every yield has identical arity/order
+    out_path_align = ""
+    claims_path = ""
+    nli_json_path = ""
+    progress_html = ""
+    pairs = []
+    idx0 = -1
+    seen = set()
+    final_state = []
+    label = "—"
+    left = ""
+    right = ""
+    final_preview = ""
+
+    # ===== 0) Align =====
     progress(0.02, desc="Loading & encoding documents")
     out_path_align, _preview = _align_stage0(
         doc1,
@@ -134,9 +149,26 @@ def _run_all(
         int(window_size),
         float(threshold),
     )
-    status0 = _stage_status(1)
+    progress_html = _stage_status(1)
 
-    # 1 -> Extract claims
+    # yield #1 (after Align)
+    yield (
+        str(out_path_align),  # 1 file (download)
+        str(out_path_align),  # 2 aligned path
+        "",                   # 3 claims path (not ready)
+        "",                   # 4 nli path (not ready)
+        progress_html,        # 5 progress HTML
+        [],                   # 6 pairs (state)
+        -1,                   # 7 idx (state)
+        set(),                # 8 seen (state)
+        [],                   # 9 final_state (state)
+        "—",                  # 10 label (markdown)
+        "",                   # 11 left html
+        "",                   # 12 right html
+        "",                   # 13 final preview
+    )
+
+    # ===== 1) Extract claims =====
     progress(0.35, desc="Extracting claims with LLM")
     claims_path = run_claim_extraction(
         input_path=out_path_align,
@@ -144,15 +176,32 @@ def _run_all(
         model_name=llm_model,
         temperature=float(llm_temp),
     )
-    status1 = _stage_status(2)
+    progress_html = _stage_status(2)
 
-    # 2 -> Compute NLI
+    # yield #2 (after Claims)
+    yield (
+        str(out_path_align),
+        str(out_path_align),
+        str(claims_path),
+        "",                   # NLI not ready yet
+        progress_html,
+        [],                   # pairs
+        -1,                   # idx
+        set(),                # seen
+        [],                   # final_state
+        "—",
+        "",
+        "",
+        "",
+    )
+
+    # ===== 2) NLI =====
     progress(0.65, desc="Running NLI over claim pairs")
     with open(claims_path, "rb") as f:
         nli_json_path = run_nli_file(nli_model, f)
-    status2 = _stage_status(3)
+    progress_html = _stage_status(3)
 
-    # 3 -> Prepare interactive combiner
+    # ===== 3) Prepare combiner UI =====
     pairs = _load_pairs(nli_json_path)
     idx0 = _next_valid_idx(pairs, 0, set()) or -1
     label = "—" if idx0 == -1 else f"Ready • {len(pairs)} pairs"
@@ -161,18 +210,18 @@ def _run_all(
     final_preview = ""
 
     progress(0.98, desc="Ready")
-    return (
-        str(out_path_align),  # file for download
+
+    # yield #3 (final)
+    yield (
+        str(out_path_align),
         str(out_path_align),
         str(claims_path),
         str(nli_json_path),
-        status0,
-        status1,
-        status2,
+        progress_html,
         pairs,
         idx0,
-        set(),
-        [],  # states
+        set(),       # seen starts empty
+        [],          # final_state
         label,
         left,
         right,
@@ -257,9 +306,10 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
     # --- bottom progress ---
     gr.Markdown("---")
     gr.Markdown("**Progress**")
-    stage0 = gr.HTML(_stage_status(0))
-    stage1 = gr.HTML("")
-    stage2 = gr.HTML("")
+    # stage0 = gr.HTML(_stage_status(0))
+    # stage1 = gr.HTML("")
+    # stage2 = gr.HTML("")
+    progress_html = gr.HTML(_stage_status(0))
 
     run_btn.click(
         fn=_run_all,
@@ -281,9 +331,7 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
             align_out,
             claims_out,
             nli_out,
-            stage0,
-            stage1,
-            stage2,
+            progress_html,
             pairs_state,
             idx_state,
             seen_state,
