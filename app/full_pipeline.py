@@ -79,6 +79,33 @@ def _align_stage0(doc1, doc2, model_id, device, batch_size, window_size, thresho
     return str(out_path), preview
 
 
+def _pick_side(d, left: bool = True) -> str:
+    keys = (["premise_raw","premise","paragraph_1","claim_left","text_left"]
+            if left else
+            ["hypothesis_raw","hypothesis","paragraph_2","claim_right","text_right"])
+    for k in keys:
+        if k in d and d[k]:
+            return d[k]
+    return ""
+
+def _normalize_pairs(pairs: list[dict]) -> list[dict]:
+    norm = []
+    for p in pairs:
+        if "premise_raw" not in p:
+            p = {**p, "premise_raw": _pick_side(p, True)}
+        if "hypothesis_raw" not in p:
+            p = {**p, "hypothesis_raw": _pick_side(p, False)}
+        norm.append(p)
+    return norm
+
+def _safe_load_pairs(nli_json_path: str) -> list[dict]:
+    with open(nli_json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, dict) and "pairs" in data:
+        data = data["pairs"]
+    return data if isinstance(data, list) else []
+
+
 EXTRA_CSS = """
 .progress-grid { display:grid; grid-template-columns: 28px 1fr; gap:10px; align-items:center; }
 .stage-dot{ width:18px; height:18px; border-radius:99px; background:#777; }
@@ -202,10 +229,15 @@ def _run_all(
     progress_html = _stage_status(3)
 
     # ===== 3) Prepare combiner UI =====
-    pairs = _load_pairs(nli_json_path)
-    idx0 = _next_valid_idx(pairs, 0, set()) or -1
-    label = "—" if idx0 == -1 else f"Ready • {len(pairs)} pairs"
-    left = "" if idx0 == -1 else _preview_html(pairs[idx0]["premise_raw"])
+    raw_pairs = _safe_load_pairs(nli_json_path)
+    pairs = _normalize_pairs(raw_pairs)
+
+    print(f"[Combiner] pairs={len(pairs)}; keys0={list(pairs[0].keys()) if pairs else '—'}")
+
+    # show the first pair if any; don't over-filter here
+    idx0 = 0 if pairs else -1
+    label = "No aligned pairs" if idx0 == -1 else f"Ready • {len(pairs)} pairs"
+    left  = "" if idx0 == -1 else _preview_html(pairs[idx0]["premise_raw"])
     right = "" if idx0 == -1 else _preview_html(pairs[idx0]["hypothesis_raw"])
     final_preview = ""
 
@@ -218,7 +250,7 @@ def _run_all(
         str(claims_path),
         str(nli_json_path),
         progress_html,
-        pairs,
+        pairs,       # <-- normalized pairs go into state
         idx0,
         set(),       # seen starts empty
         [],          # final_state
