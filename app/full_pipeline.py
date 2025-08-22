@@ -21,13 +21,7 @@ from app.align_docs import (
 from app.claim_extractor import DEFAULT_SYSTEM_PROMPT, run_claim_extraction
 
 # Stage 3 building blocks
-from app.combine_pairs import (
-    _load_pairs,
-    _next_valid_idx,
-    _preview_html,
-    choose,
-    download,
-)
+from app.combine_pairs import _preview_html, choose, download
 
 # Stage 2
 from app.nli_predict import _list_models, run_nli_file
@@ -96,17 +90,34 @@ def _coerce_text(v) -> str:
         return " ".join(map(_coerce_text, v.values()))
     return str(v)
 
+
 def _pick_side(p: dict, left: bool) -> str:
     # Try many aliases, in a priority order.
     left_keys = [
-        "premise_raw", "premise", "claim_left", "text_left", "paragraph_1",
-        "input_1", "output_1", "left", "a", "source_left"
+        "premise_raw",
+        "premise",
+        "claim_left",
+        "text_left",
+        "paragraph_1",
+        "input_1",
+        "output_1",
+        "left",
+        "a",
+        "source_left",
     ]
     right_keys = [
-        "hypothesis_raw", "hypothesis", "claim_right", "text_right", "paragraph_2",
-        "input_2", "output_2", "right", "b", "source_right"
+        "hypothesis_raw",
+        "hypothesis",
+        "claim_right",
+        "text_right",
+        "paragraph_2",
+        "input_2",
+        "output_2",
+        "right",
+        "b",
+        "source_right",
     ]
-    for k in (left_keys if left else right_keys):
+    for k in left_keys if left else right_keys:
         v = p.get(k)
         t = _coerce_text(v)
         if t and t.strip():
@@ -271,9 +282,9 @@ def _run_all(
         left = right = ""
     else:
         p0 = pairs[idx0]
-        left_raw  = p0.get("premise_raw")    or _pick_side(p0, True)
+        left_raw = p0.get("premise_raw") or _pick_side(p0, True)
         right_raw = p0.get("hypothesis_raw") or _pick_side(p0, False)
-        left  = _preview_html(left_raw)
+        left = _preview_html(left_raw)
         right = _preview_html(right_raw)
     final_preview = ""
 

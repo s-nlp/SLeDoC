@@ -10,22 +10,6 @@ from lettucedetect.models.inference import HallucinationDetector
 
 from app.settings import nav_tag, side_bar
 
-
-# Try a few output formats until one returns something useful
-# ‘classification’ is asked **first** because it *always* yields exactly one
-# verdict with a numeric score.
-def _predict(detector, premise: str, hypothesis: str):
-    for fmt in ("classification", "spans", "tokens"):
-        out = detector.predict_prompt(
-            prompt=premise,
-            answer=hypothesis,
-            output_format=fmt,
-        )
-        if out not in (None, [], {}):  # any non-empty result is good
-            return out
-    return None  # give up completely
-
-
 #  Config
 LOGLEVEL = (pathlib.os.getenv("LOGLEVEL") or "INFO").upper()
 logging.basicConfig(

@@ -10,7 +10,6 @@ from typing import Iterable, List, Tuple
 import gradio as gr
 import torch
 from docx import Document
-from lxml import etree
 from torch import Tensor
 from transformers import AutoModel, AutoTokenizer
 
@@ -19,57 +18,59 @@ from .settings import nav_tag, side_bar
 
 # -------------------- text extraction & segmentation --------------------
 def get_paragraphs_from_docx(docx_path: str | Path) -> List[str]:
-    """Extract visible paragraphs from a .docx using lxml for robustness."""
+    """
+    Return one string per DOCX paragraph (no cross-paragraph merging).
+    Empty paragraphs are skipped by default.
+    """
     doc = Document(docx_path)
-    paragraphs = []
-
-    for part in doc.part._package.parts:
-        if (
-            part.content_type
-            == "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
-        ):
-            tree = etree.fromstring(part.blob)
-            namespaces = {
-                "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-            }
-            for para in tree.xpath(".//w:p", namespaces=namespaces):
-                texts = para.xpath(".//w:t", namespaces=namespaces)
-                full_text = "".join([t.text for t in texts if t.text])
-                if full_text and full_text.strip():
-                    paragraphs.append(full_text.strip())
-    return paragraphs
+    out: List[str] = []
+    for p in doc.paragraphs:
+        # p.text already concatenates all runs in the paragraph
+        text = re.sub(r"\s+", " ", (p.text or "")).strip()
+        if text:  # keep this True if you want to drop blank lines
+            out.append(text)
+        # else: if you need to *preserve* blank separators, append "" here
+    return out
 
 
 def merge_incomplete_sentences(lines: Iterable[str]) -> List[str]:
+    """
+    Merge broken lines *within the same paragraph*, but never glue
+    separate paragraphs together. This function expects `lines` to be
+    paragraph strings already (i.e., output of get_paragraphs_from_docx).
+    """
     merged: List[str] = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        if not merged:
-            merged.append(line)
+    end_pat = re.compile(r'[.!?…»)"\]]\s*$')  # typical sentence closers
+
+    for para in lines:
+        para = para.strip()
+        if not para:
             continue
 
-        starts_lower = line[:1].lower() == line[:1]
-        prev_ends_semicolon = merged[-1].strip().endswith(";")
-
-        if starts_lower or prev_ends_semicolon:
-            merged[-1] += " " + line
+        # If your upstream sometimes splits a single paragraph into several
+        # lines, you can merge those here based on punctuation. If not needed,
+        # simply append the paragraph.
+        if merged and not end_pat.search(merged[-1]):
+            merged[-1] = (merged[-1] + " " + para).strip()
         else:
-            merged.append(line)
+            merged.append(para)
+
     return merged
 
 
 def separate_points(paragraphs: Iterable[str]) -> List[str]:
-    results: List[str] = []
-    pattern = r"(?:ГЛАВА\s+\d+\.|\d+(?:\.\d+){0,2}\.)(?=\s[А-ЯЁ]|[А-ЯЁ])"
-    for paragraph in paragraphs:
-        modified = re.sub(pattern, r"\n", paragraph)
-        for segment in modified.split("\n"):
-            cleaned = segment.strip()
-            if cleaned:
-                results.append(cleaned)
-    return results
+    """
+    Split bullet/numbered points but never join across paragraphs.
+    """
+    out: List[str] = []
+    for p in paragraphs:
+        # Example rule: split on "^\s*\d+\.\s+" or bullets — tweak to your docs.
+        parts = re.split(r"(?:^|(?<=\n))\s*(?=\d+\.\s+|•\s+|- )", p)
+        for part in parts:
+            part = part.strip()
+            if part:
+                out.append(part)
+    return out
 
 
 def filter_non_russian(lines: Iterable[str]) -> List[str]:
@@ -166,9 +167,11 @@ def _align(doc1, doc2, model_id, device, batch_size, window_size, threshold):
     p1 = Path(doc1.name if hasattr(doc1, "name") else doc1)
     p2 = Path(doc2.name if hasattr(doc2, "name") else doc2)
 
-    paragraphs_a = merge_incomplete_sentences(get_paragraphs_from_docx(p1))
-    paragraphs_b = filter_non_russian(
-        separate_points(merge_incomplete_sentences(get_paragraphs_from_docx(p2)))
+    paragraphs_a = separate_points(
+        merge_incomplete_sentences(get_paragraphs_from_docx(p1))
+    )
+    paragraphs_b = separate_points(
+        merge_incomplete_sentences(get_paragraphs_from_docx(p2))
     )
 
     enc = Encoder.load(model_id=model_id, device=device)

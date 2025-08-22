@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-
-os.environ["TOKENIZERS_PARALLELISM"] = "True"
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -19,6 +17,7 @@ from tqdm import tqdm
 
 from app.openai_client import make_client
 
+os.environ["TOKENIZERS_PARALLELISM"] = "True"
 load_dotenv()
 
 default_api_key = os.getenv("OPENAI_API_KEY", "")
