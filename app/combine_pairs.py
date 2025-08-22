@@ -55,6 +55,8 @@ def _next_valid_idx(pairs: List[dict], start: int, seen: Set[str]) -> int | None
 
 def _preview_html(span: str) -> str:
     """Wrap span text into a bordered box for nicer display."""
+    if not span:
+        span = "—"
     escaped = span.replace("\n", "<br>")
     return f"<div style='border:1px solid #888;padding:8px;min-height:160px'>{escaped}</div>"
 

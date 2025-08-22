@@ -79,30 +79,48 @@ def _align_stage0(doc1, doc2, model_id, device, batch_size, window_size, thresho
     return str(out_path), preview
 
 
-def _pick_side(d, left: bool = True) -> str:
-    keys = (
-        ["premise_raw", "premise", "paragraph_1", "claim_left", "text_left"]
-        if left
-        else [
-            "hypothesis_raw",
-            "hypothesis",
-            "paragraph_2",
-            "claim_right",
-            "text_right",
-        ]
-    )
-    for k in keys:
-        if k in d and d[k]:
-            return d[k]
+def _coerce_text(v) -> str:
+    # Turn lists/dicts into readable text
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, (list, tuple)):
+        return " ".join(_coerce_text(x) for x in v if x)
+    if isinstance(v, dict):
+        # common shapes: {'text': '...'}, {'content': '...'}
+        for k in ("text", "content", "value"):
+            if k in v and v[k]:
+                return _coerce_text(v[k])
+        # last resort: join values
+        return " ".join(map(_coerce_text, v.values()))
+    return str(v)
+
+def _pick_side(p: dict, left: bool) -> str:
+    # Try many aliases, in a priority order.
+    left_keys = [
+        "premise_raw", "premise", "claim_left", "text_left", "paragraph_1",
+        "input_1", "output_1", "left", "a", "source_left"
+    ]
+    right_keys = [
+        "hypothesis_raw", "hypothesis", "claim_right", "text_right", "paragraph_2",
+        "input_2", "output_2", "right", "b", "source_right"
+    ]
+    for k in (left_keys if left else right_keys):
+        v = p.get(k)
+        t = _coerce_text(v)
+        if t and t.strip():
+            return t.strip()
     return ""
 
 
 def _normalize_pairs(pairs: list[dict]) -> list[dict]:
     norm = []
     for p in pairs:
-        if "premise_raw" not in p:
+        # backfill if missing OR empty/falsy
+        if not p.get("premise_raw"):
             p = {**p, "premise_raw": _pick_side(p, True)}
-        if "hypothesis_raw" not in p:
+        if not p.get("hypothesis_raw"):
             p = {**p, "hypothesis_raw": _pick_side(p, False)}
         norm.append(p)
     return norm
@@ -249,8 +267,14 @@ def _run_all(
     # show the first pair if any; don't over-filter here
     idx0 = 0 if pairs else -1
     label = "No aligned pairs" if idx0 == -1 else f"Ready • {len(pairs)} pairs"
-    left = "" if idx0 == -1 else _preview_html(pairs[idx0]["premise_raw"])
-    right = "" if idx0 == -1 else _preview_html(pairs[idx0]["hypothesis_raw"])
+    if idx0 == -1:
+        left = right = ""
+    else:
+        p0 = pairs[idx0]
+        left_raw  = p0.get("premise_raw")    or _pick_side(p0, True)
+        right_raw = p0.get("hypothesis_raw") or _pick_side(p0, False)
+        left  = _preview_html(left_raw)
+        right = _preview_html(right_raw)
     final_preview = ""
 
     progress(0.98, desc="Ready")
