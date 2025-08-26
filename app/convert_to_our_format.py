@@ -90,6 +90,8 @@ def convert_csv_to_nli_json(
                 "label": mapped,
                 "confidence": None,
             }
+            if item.get("anchor"):
+                res["anchor"] = str(item["anchor"])
             if keep_reasoning and item.get("reasoning"):
                 res["explanation"] = str(item["reasoning"])
             nli_results.append(res)

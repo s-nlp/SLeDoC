@@ -62,5 +62,6 @@ nav_tag = """
     <a href="/nli/">NLI Viewer</a>
     <a href="/convert/">Convert CSV</a>
     <a href="/full_pipeline/">Full Pipeline</a>
+    <a href="/pipeline-llm/">Pipeline-LLM</a>
 </div>
 """
