@@ -58,10 +58,11 @@ body{ margin-left:140px !important; }
 nav_tag = """
 <div id="sidebar">
     <a href="/">Pipeline</a>
-    <a href="/nli/">NLI Viewer</a>
-    <a href="/convert/">Convert CSV</a>
     <a href="/full_pipeline/">Full Pipeline</a>
     <a href="/pipeline-llm/">Pipeline-LLM</a>
+    <a href="/pipeline-llm-new/">Pipeline-LLM-NEW</a>
+    <a href="/nli/">NLI Viewer</a>
+    <a href="/convert/">Convert CSV</a>
 </div>
 """
 
