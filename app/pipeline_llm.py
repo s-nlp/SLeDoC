@@ -144,6 +144,16 @@ ADDITION означает, что сегмент представляет соб
 LABEL_MAP = LABEL_MAP_DEFAULT
 
 
+def _as_path(obj) -> Path:
+    if isinstance(obj, Path):
+        return obj
+    if isinstance(obj, dict):
+        # handle gradio dict payloads
+        p = obj.get("path") or obj.get("name")
+        return Path(p) if p else Path(str(obj))
+    return Path(getattr(obj, "name", obj))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # LLM wrappers
 @retry(
@@ -212,7 +222,28 @@ def run_llm_nli_file(
         "nli_model": "llm:<model_name>"
       }
     """
-    input_path = Path(input_path)
+    input_path = _as_path(input_path)
+
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input file not found: {input_path}")
+
+    raw = input_path.read_text(encoding="utf-8")
+    if not raw.strip():
+        raise ValueError(f"Input JSON is empty: {input_path}")
+
+    try:
+        data = json.loads(raw)
+    except Exception as e:
+        raise ValueError(f"Cannot parse input JSON: {e}") from e
+
+    if not isinstance(data, list):
+        raise ValueError("Input must be a list of paragraph pairs.")
+    # optional: light schema check
+    if data and not isinstance(data[0], dict):
+        raise ValueError(
+            "Each element must be an object with 'paragraph_1'/'paragraph_2'."
+        )
+
     if output_path is None:
         output_path = input_path.with_name(
             f"{input_path.stem}_llm_nli{input_path.suffix}"

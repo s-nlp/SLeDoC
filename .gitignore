@@ -14,7 +14,9 @@
 # 🖥️ VSCode, Pycharm, etc.
 *.vscode
 *.idea
+*.virtual_documents
 *.ipynb
+*.ipynb_checkpoints
 
 # MacOS
 *.DS_Store

@@ -7,9 +7,28 @@ from typing import List, Set, Tuple
 
 import gradio as gr
 
+
 # ---------------------------------------------------------------------------
 #  Helpers
 # ---------------------------------------------------------------------------
+def _fmt_conf(x) -> str:
+    """
+    Safe formatter for confidence. Returns '—' if None/NaN/not-parsable.
+    """
+    try:
+        if x is None:
+            return "—"
+        if isinstance(x, str):
+            x = x.strip()
+            if not x:
+                return "—"
+            x = float(x)
+        v = float(x)
+        if v != v:  # NaN check
+            return "—"
+        return f"{v:.3f}"
+    except Exception:
+        return "—"
 
 
 def _flatten_nli_container(obj) -> List[dict]:
@@ -179,7 +198,7 @@ with gr.Blocks() as demo:
             first_idx,
             set(),
             [],
-            f"Label: {p['label']} │ Confidence: {p['confidence']:.3f}",
+            f"Label: {p.get('label', 'None')} │ Confidence: {_fmt_conf(p.get('confidence'))}",
             _preview_html(p["premise_raw"]),
             _preview_html(p["hypothesis_raw"]),
             "",
