@@ -57,14 +57,12 @@ def _align_stage0(doc1, doc2, model_id, device, batch_size, window_size, thresho
 
     data = build_output_json(paragraphs_a, paragraphs_b, matches)
 
-    # Save to temp file (user-downloadable, not in example_data)
     tmpdir = Path(tempfile.mkdtemp())
     out_path = tmpdir / "paragraphs_aligned.json"
     out_path.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    # Return path and a tiny preview string
     preview = (
         json.dumps(data[:5], ensure_ascii=False, indent=2)
         if isinstance(data, list)
@@ -74,7 +72,6 @@ def _align_stage0(doc1, doc2, model_id, device, batch_size, window_size, thresho
 
 
 def _coerce_text(v) -> str:
-    # Turn lists/dicts into readable text
     if v is None:
         return ""
     if isinstance(v, str):
@@ -82,17 +79,14 @@ def _coerce_text(v) -> str:
     if isinstance(v, (list, tuple)):
         return " ".join(_coerce_text(x) for x in v if x)
     if isinstance(v, dict):
-        # common shapes: {'text': '...'}, {'content': '...'}
         for k in ("text", "content", "value"):
             if k in v and v[k]:
                 return _coerce_text(v[k])
-        # last resort: join values
         return " ".join(map(_coerce_text, v.values()))
     return str(v)
 
 
 def _pick_side(p: dict, left: bool) -> str:
-    # Try many aliases, in a priority order.
     left_keys = [
         "premise_raw",
         "premise",
@@ -150,19 +144,24 @@ EXTRA_CSS = """
 .stage-dot.done{ background:#22c55e; }
 .stage-dot.run{ background:#f59e0b; }
 .stage-title{ font-weight:700; }
+
+/* floating settings panel */
 .floating-panel{
   position: fixed;
-  right: 1rem;
-  top: 4.5rem;
-  width: min(840px, 92vw);
+  right: 24px;
+  top: 92px;
+  width: 520px;
   max-height: 80vh;
   overflow: auto;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  box-shadow: 0 10px 30px rgba(0,0,0,.15);
-  border-radius: 12px;
+  z-index: 20;
   padding: 12px;
-  z-index: 9999;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(0,0,0,.12);
+}
+@media (max-width: 1280px) {
+  .floating-panel { position: static; width: auto; max-height: none; box-shadow: none; }
 }
 """
 
@@ -218,7 +217,7 @@ def _run_all(
     final_preview = ""
 
     progress(0.02, desc="Loading & encoding documents")
-    out_path_align, _preview = _align_stage0(
+    out_path_align, _ = _align_stage0(
         doc1,
         doc2,
         embed_model,
@@ -249,7 +248,7 @@ def _run_all(
         progress(0.35, desc="LLM (1+2): extract + NLI")
         nli_json_path = run_llm_nli_file(
             input_path=out_path_align,
-            system_prompt=system_prompt,
+            system_prompt=system_prompt or LLM_NLI_SYSTEM_PROMPT,
             model_name=llm_model,
             temperature=float(llm_temp),
         )
@@ -259,7 +258,7 @@ def _run_all(
         progress(0.35, desc="Extracting claims with LLM")
         claims_path = run_claim_extraction(
             input_path=out_path_align,
-            system_prompt=system_prompt if system_prompt else DEFAULT_SYSTEM_PROMPT,
+            system_prompt=system_prompt or DEFAULT_SYSTEM_PROMPT,
             model_name=llm_model,
             temperature=float(llm_temp),
         )
@@ -295,15 +294,12 @@ def _run_all(
 
     idx0 = 0 if pairs else -1
     label = "No aligned pairs" if idx0 == -1 else f"Ready • {len(pairs)} pairs"
-    if idx0 == -1:
-        left = right = ""
-    else:
+    if idx0 != -1:
         p0 = pairs[idx0]
         left_raw = p0.get("premise_raw") or _pick_side(p0, True)
         right_raw = p0.get("hypothesis_raw") or _pick_side(p0, False)
         left = _preview_html(left_raw)
         right = _preview_html(right_raw)
-    final_preview = ""
 
     progress(0.98, desc="Ready")
 
@@ -334,82 +330,60 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
             doc1 = gr.File(label="Document A", file_types=[".docx"])
             doc2 = gr.File(label="Document B", file_types=[".docx"])
 
-        with gr.Row():
-            settings_btn = gr.Button("⚙️ Настройки", variant="secondary")
-            settings_open = gr.Checkbox(False, visible=False, label="settings_open")
-            with gr.Column(
-                visible=False, elem_classes=["floating-panel"]
-            ) as settings_panel:
-                with gr.Tabs():
-                    with gr.Accordion("Embedding settings", open=False):
-                        embed_model = gr.Dropdown(
-                            choices=[
-                                "intfloat/multilingual-e5-large",
-                                "intfloat/multilingual-e5-base",
-                            ],
-                            value="intfloat/multilingual-e5-base",
-                            label="Embedding model",
-                        )
-                        device = gr.Dropdown(
-                            choices=["cpu", "cuda"], value="cpu", label="Device"
-                        )
-                        batch_size = gr.Slider(
-                            8, 128, value=64, step=8, label="Batch size"
-                        )
-                        window_size = gr.Slider(
-                            5, 200, value=50, step=5, label="Window size"
-                        )
-                        threshold = gr.Slider(
-                            0.5,
-                            0.99,
-                            value=0.90,
-                            step=0.01,
-                            label="Similarity threshold",
-                        )
+        with gr.Column(scale=1, min_width=260):
+            settings_open = gr.State(False)
+            settings_btn = gr.Button("⚙️ Settings", variant="secondary")
+            run_btn = gr.Button("▶️ Run full pipeline", variant="primary")
 
-                    with gr.Accordion("Claim extraction (LLM)", open=False):
-                        system_prompt = gr.Textbox(
-                            value=LLM_NLI_SYSTEM_PROMPT, label="System prompt", lines=10
-                        )
-                        llm_model = gr.Textbox(value="gpt-4o", label="Model name")
-                        llm_temp = gr.Slider(
-                            0.0, 1.0, value=0.2, step=0.05, label="Temperature"
-                        )
-
-                    with gr.Accordion("NLI model", open=False):
-                        nli_model = gr.Dropdown(
-                            label="Local NLI model",
-                            choices=_list_models(),
-                            value=_list_models()[0] if _list_models() else None,
-                        )
-                    with gr.Accordion("Stage 1+2 mode", open=True):
-                        mode_12 = gr.Radio(
-                            choices=["LLM (single-step)", "Not LLM (two-step)"],
-                            value="LLM (single-step)",
-                            label="How to run stages 1+2?",
-                        )
-                    with gr.Accordion("Artifacts", open=False):
-                        align_out_file = gr.File(
-                            label="Aligned JSON (download)", interactive=False
-                        )
-                        align_out = gr.Textbox(
-                            label="Aligned pairs JSON (path)", interactive=False
-                        )
-                        claims_out = gr.Textbox(
-                            label="Claims JSON (path)", interactive=False
-                        )
-                        nli_out = gr.Textbox(label="NLI JSON (path)", interactive=False)
-
-            def _toggle_open(val: bool):
-                new_val = not bool(val)
-                return new_val, gr.update(visible=new_val)
-
-            settings_btn.click(
-                _toggle_open,
-                inputs=settings_open,
-                outputs=[settings_open, settings_panel],
+    with gr.Column(visible=False, elem_classes=["floating-panel"]) as settings_panel:
+        with gr.Accordion("Embedding settings", open=False):
+            embed_model = gr.Dropdown(
+                choices=[
+                    "intfloat/multilingual-e5-large",
+                    "intfloat/multilingual-e5-base",
+                ],
+                value="intfloat/multilingual-e5-base",
+                label="Embedding model",
             )
-            run_btn = gr.Button("Run full pipeline", variant="primary")
+            device = gr.Dropdown(choices=["cpu", "cuda"], value="cpu", label="Device")
+            batch_size = gr.Slider(8, 128, value=64, step=8, label="Batch size")
+            window_size = gr.Slider(5, 200, value=50, step=5, label="Window size")
+            threshold = gr.Slider(
+                0.5, 0.99, value=0.90, step=0.01, label="Similarity threshold"
+            )
+        with gr.Accordion("Claim extraction (LLM)", open=False):
+            system_prompt = gr.Textbox(
+                value=LLM_NLI_SYSTEM_PROMPT, label="System prompt", lines=10
+            )
+            llm_model = gr.Textbox(value="gpt-4o", label="Model name")
+            llm_temp = gr.Slider(0.0, 1.0, value=0.2, step=0.05, label="Temperature")
+        with gr.Accordion("NLI model", open=False):
+            nli_model = gr.Dropdown(
+                label="Local NLI model",
+                choices=_list_models(),
+                value=_list_models()[0] if _list_models() else None,
+            )
+        with gr.Accordion("Stage 1+2 mode", open=True):
+            mode_12 = gr.Radio(
+                choices=["LLM (single-step)", "Not LLM (two-step)"],
+                value="LLM (single-step)",
+                label="How to run stages 1+2?",
+            )
+        with gr.Accordion("Artifacts", open=False):
+            align_out_file = gr.File(label="Aligned JSON (download)", interactive=False)
+            align_out = gr.Textbox(label="Aligned pairs JSON (path)", interactive=False)
+            claims_out = gr.Textbox(label="Claims JSON (path)", interactive=False)
+            nli_out = gr.Textbox(label="NLI JSON (path)", interactive=False)
+
+    def _toggle_open(opened: bool):
+        new_val = not bool(opened)
+        return new_val, gr.update(visible=new_val)
+
+    settings_btn.click(
+        _toggle_open,
+        inputs=[settings_open],
+        outputs=[settings_open, settings_panel],
+    )
 
     with gr.Row():
         with gr.Column(scale=1):
