@@ -58,7 +58,6 @@ body{ margin-left:140px !important; }
 nav_tag = """
 <div id="sidebar">
     <a href="/">Pipeline</a>
-    <a href="/mismatch/">Mismatch Viewer</a>
     <a href="/nli/">NLI Viewer</a>
     <a href="/convert/">Convert CSV</a>
     <a href="/full_pipeline/">Full Pipeline</a>
@@ -73,68 +72,111 @@ EXTRA_CSS = """
 .para-box{
     border:1px solid #000; padding:8px; min-height:320px; min-width:320px;
 }
-.hl{position:relative; cursor:help;}
-/* какой цвет будет у span при нажатии */
+/* вид курсора - pointer*/
+.hl{position:relative; cursor:pointer;}
+/* какой цвет будет у выделенного span при нажатии */
 .hl.selected     { outline:2px solid #000; }
+/* какой цвет будет у других span при нажатии на выделенный */
 .hl.dimmed       { opacity:.35; }
-.hl:hover::after,.hl:focus::after{
-    content:attr(data-claim);
-    position:absolute; left:0; top:100%;
-    max-width:1000px; min-width:240px; white-space:pre-wrap;
-    z-index:10; background:#333; color:#fff; padding:6px 8px; border-radius:4px;
-    font-size:13px; line-height:1.3; box-shadow:0 2px 6px rgba(0,0,0,.25);
-}
+/* что будет показываться при нажатии курсором */
+.hl:hover::after,.hl:focus::after{ content:none; display:none; }
 """
 
 # скрипт курсора + показывает скор уверенности
 CUSTOM_JS = """
 () => {
   const confBox = () => document.getElementById('conf_box');
-  const hi   = (id,col) => { const e=document.getElementById(id);
-    if(!e)return; e.dataset._bg=e.style.backgroundColor;
-    e.style.backgroundColor=col; e.style.outline='2px solid #000'; };
-  const bye  = id => { const e=document.getElementById(id);
-    if(!e||!e.dataset._bg)return;
-    e.style.backgroundColor=e.dataset._bg; e.style.outline=''; };
 
-  document.addEventListener('mouseover', ev=>{
-      const s=ev.target.closest('span.hl');
-      if(s){
-        const tgt=s.dataset.target || '';
-        hi(s.id, s.dataset.hcolor || '');
-        if(tgt) hi(tgt, s.dataset.hcolor || '');
-        const c=parseFloat(s.dataset.conf||'');
-        if(confBox()) confBox().textContent = 'Confidence: ' + (isNaN(c)?'-':c.toFixed(3));
-      }
-  });
-  document.addEventListener('mouseout', ev=>{
-      const s=ev.target.closest('span.hl');
-      if(s){
-        const tgt=s.dataset.target || '';
-        bye(s.id);
-        if(tgt) bye(tgt);
-      }
-  });
-    /* click = lock / unlock */
-    document.addEventListener('click', ev=>{
-    const span = ev.target.closest('span.hl');
-    if(!span) return;
+  const hi = (id, col) => {
+    const e = document.getElementById(id);
+    if (!e) return;
+    if (e.classList.contains('selected')) {
+      // don't override selected color on hover
+      return;
+    }
+    if (!('_bg' in e.dataset)) e.dataset._bg = e.style.backgroundColor || '';
+    e.style.backgroundColor = col || e.style.backgroundColor;
+    e.style.outline = '2px solid #000';
+  };
 
-    /* Clear previous selection */
+  const bye = (id) => {
+    const e = document.getElementById(id);
+    if (!e) return;
+    if (e.classList.contains('selected')) {
+      // keep selected color on mouseout
+      return;
+    }
+    const bg = ('_bg' in e.dataset) ? e.dataset._bg : '';
+    e.style.backgroundColor = bg || '';
+    e.style.outline = '';
+  };
+
+  const clearSelection = () => {
     document.querySelectorAll('span.hl.selected, span.hl.dimmed')
-            .forEach(el => { el.classList.remove('selected','dimmed'); });
+      .forEach(el => { el.classList.remove('selected','dimmed'); });
+    document.querySelectorAll('span.hl').forEach(el => {
+      // restore any styles
+      const bg = ('_bg' in el.dataset) ? el.dataset._bg : '';
+      el.style.backgroundColor = bg || '';
+      el.style.outline = '';
+    });
+    if (confBox()) confBox().textContent = 'Confidence: -';
+  };
 
-    /* Select the clicked span and its counterpart (if any) */
-    const targetId = span.dataset.target;
-    span.classList.add('selected');
-    if(targetId){
-        const mate = document.getElementById(targetId);
-        if(mate) mate.classList.add('selected');
+  document.addEventListener('mouseover', ev => {
+    const s = ev.target.closest('span.hl');
+    if (s) {
+      const tgt = s.dataset.target || '';
+      hi(s.id, s.dataset.hcolor || '');
+      if (tgt) hi(tgt, s.dataset.hcolor || '');
+      const c = parseFloat(s.dataset.conf || '');
+      if (confBox()) confBox().textContent = 'Confidence: ' + (isNaN(c) ? '-' : c.toFixed(3));
+    }
+  });
+
+  document.addEventListener('mouseout', ev => {
+    const s = ev.target.closest('span.hl');
+    if (s) {
+      const tgt = s.dataset.target || '';
+      bye(s.id);
+      if (tgt) bye(tgt);
+    }
+  });
+
+  // click = lock selection with the same (green/red/blue) color
+  document.addEventListener('click', ev => {
+    const span = ev.target.closest('span.hl');
+    if (!span) {
+      // clicked outside any span ⇒ clear selection
+      clearSelection();
+      return;
     }
 
-    /* Dim every other span to emphasise the pair */
+    // clicked on a span ⇒ reset previous, then select this pair
+    clearSelection();
+
+    const targetId = span.dataset.target;
+    const col = span.dataset.hcolor || '';
+
+    // select clicked
+    span.classList.add('selected');
+    span.style.backgroundColor = col;
+    span.style.outline = '2px solid #000';
+
+    // select counterpart if exists
+    if (targetId) {
+      const mate = document.getElementById(targetId);
+      if (mate) {
+        mate.classList.add('selected');
+        const mcol = mate.dataset.hcolor || col;
+        mate.style.backgroundColor = mcol;
+        mate.style.outline = '2px solid #000';
+      }
+    }
+
+    // dim others
     document.querySelectorAll('span.hl:not(.selected)')
-            .forEach(el => el.classList.add('dimmed'));
-    });
+      .forEach(el => el.classList.add('dimmed'));
+  });
 }
 """

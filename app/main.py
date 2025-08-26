@@ -19,9 +19,7 @@ gr.mount_gradio_app(app, np.demo, path="/nli-predict", root_path="/nli-predict")
 gr.mount_gradio_app(app, conv.demo, path="/convert", root_path="/convert")
 gr.mount_gradio_app(app, ad.demo, path="/align", root_path="/align")
 gr.mount_gradio_app(app, fp.demo, path="/full_pipeline", root_path="/full_pipeline")
-gr.mount_gradio_app(
-    app, pll.demo, path="/pipeline-llm", root_path="/pipeline-llm"
-)  # ← НОВОЕ
+gr.mount_gradio_app(app, pll.demo, path="/pipeline-llm", root_path="/pipeline-llm")
 
 gr.mount_gradio_app(app, mp.demo, path="/", root_path="/")
 
