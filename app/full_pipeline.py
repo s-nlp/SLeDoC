@@ -26,6 +26,10 @@ from app.combine_pairs import _preview_html, choose, download
 # Stage 2
 from app.nli_predict import _list_models, run_nli_file
 
+# Stae 1+2 with LLM
+from app.pipeline_llm import SYSTEM_PROMPT as LLM_NLI_SYSTEM_PROMPT
+from app.pipeline_llm import run_llm_nli_file
+
 from .settings import nav_tag, side_bar
 
 
@@ -181,6 +185,7 @@ def _run_all(
     batch_size,
     window_size,
     threshold,
+    mode_12,
     system_prompt,
     llm_model,
     llm_temp,
@@ -233,39 +238,51 @@ def _run_all(
         "",  # 12 right html
         "",  # 13 final preview
     )
+    # ===== 1+2 =====
+    if str(mode_12).lower().startswith("llm"):
+        # Fused route: one LLM call that does extraction + NLI
+        progress(0.35, desc="LLM (1+2): extract + NLI")
+        nli_json_path = run_llm_nli_file(
+            input_path=out_path_align,
+            system_prompt=system_prompt,  # defaults to LLM_NLI_SYSTEM_PROMPT from UI
+            model_name=llm_model,
+            temperature=float(llm_temp),
+        )
+        claims_path = ""  # no standalone claims file in fused mode
+        progress_html = _stage_status(3)  # jump ahead (1 done, 2 done)
+    else:
+        # ===== 1) Extract claims =====
+        progress(0.35, desc="Extracting claims with LLM")
+        claims_path = run_claim_extraction(
+            input_path=out_path_align,
+            system_prompt=system_prompt if system_prompt else DEFAULT_SYSTEM_PROMPT,
+            model_name=llm_model,
+            temperature=float(llm_temp),
+        )
+        progress_html = _stage_status(2)
 
-    # ===== 1) Extract claims =====
-    progress(0.35, desc="Extracting claims with LLM")
-    claims_path = run_claim_extraction(
-        input_path=out_path_align,
-        system_prompt=system_prompt,
-        model_name=llm_model,
-        temperature=float(llm_temp),
-    )
-    progress_html = _stage_status(2)
+        # yield #2 (after Claims)
+        yield (
+            str(out_path_align),
+            str(out_path_align),
+            str(claims_path),
+            "",
+            progress_html,
+            [],
+            -1,
+            [],
+            [],
+            "—",
+            "",
+            "",
+            "",
+        )
 
-    # yield #2 (after Claims)
-    yield (
-        str(out_path_align),
-        str(out_path_align),
-        str(claims_path),
-        "",  # NLI not ready yet
-        progress_html,
-        [],  # pairs
-        -1,  # idx
-        [],  # seen
-        [],  # final_state
-        "—",
-        "",
-        "",
-        "",
-    )
-
-    # ===== 2) NLI =====
-    progress(0.65, desc="Running NLI over claim pairs")
-    with open(claims_path, "rb") as f:
-        nli_json_path = run_nli_file(nli_model, f)
-    progress_html = _stage_status(3)
+        # ===== 2) NLI =====
+        progress(0.65, desc="Running NLI over claim pairs")
+        with open(claims_path, "rb") as f:
+            nli_json_path = run_nli_file(nli_model, f)
+        progress_html = _stage_status(3)
 
     # ===== 3) Prepare combiner UI =====
     raw_pairs = _safe_load_pairs(nli_json_path)
@@ -351,7 +368,12 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
                     choices=_list_models(),
                     value=_list_models()[0] if _list_models() else None,
                 )
-
+            with gr.Accordion("Stage 1+2 mode", open=True):
+                mode_12 = gr.Radio(
+                    choices=["LLM (single-step)", "Not LLM (two-step)"],
+                    value="LLM (single-step)",
+                    label="How to run stages 1+2?",
+                )
             run_btn = gr.Button("Run full pipeline", variant="primary")
 
     with gr.Row():
@@ -399,6 +421,7 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
             batch_size,
             window_size,
             threshold,
+            mode_12,
             system_prompt,
             llm_model,
             llm_temp,
