@@ -2,7 +2,7 @@ import html
 import json
 import re
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional
+from typing import Dict, List, Tuple
 
 import gradio as gr
 
@@ -32,13 +32,15 @@ ENTAIL_CLR, CONTRA_CLR = "#22c55e", "#f43f5e"  # bright colours
 DATA_FILE = Path("example_data/nli_test.jsonl")  # initial demo data
 # Visual colors per label
 COLOR_MAP = {
-    "entailment": "#D1FADF",       # green-ish
-    "contradiction": "#FFE2E2",    # red-ish
-    "neutral": "#E6F0FF",          # blue-ish
+    "entailment": "#D1FADF",  # green-ish
+    "contradiction": "#FFE2E2",  # red-ish
+    "neutral": "#E6F0FF",  # blue-ish
 }
+
 
 def _escape(s: str) -> str:
     return html.escape(s, quote=False)
+
 
 def _span_regex(span: str) -> re.Pattern:
     """
@@ -54,6 +56,7 @@ def _span_regex(span: str) -> re.Pattern:
     # Be tolerant to optional trailing punctuation whitespace (common with dots)
     # (safe no-op in most cases)
     return re.compile(s, flags=re.DOTALL)
+
 
 def _find_non_overlapping(text: str, spans: List[str]) -> List[Tuple[int, int, str]]:
     """
@@ -85,7 +88,14 @@ def _find_non_overlapping(text: str, spans: List[str]) -> List[Tuple[int, int, s
     hits.sort(key=lambda t: t[0])
     return hits
 
-def _inject_spans(text: str, matches: List[Tuple[int, int, str]], prefix: str, link_map: Dict[str, str], color_getter) -> str:
+
+def _inject_spans(
+    text: str,
+    matches: List[Tuple[int, int, str]],
+    prefix: str,
+    link_map: Dict[str, str],
+    color_getter,
+) -> str:
     """
     Inject <span class="hl"> wrappers into text at given positions.
     - prefix: "p1" or "p2"
@@ -108,12 +118,13 @@ def _inject_spans(text: str, matches: List[Tuple[int, int, str]], prefix: str, l
             f'data-hcolor="{_escape(hcolor)}" '
             f'data-claim="{_escape(segment)}" '
             f'data-conf="">'
-            f'{_escape(segment)}'
-            f'</span>'
+            f"{_escape(segment)}"
+            f"</span>"
         )
         last = e
     out.append(_escape(text[last:]))
     return "".join(out)
+
 
 def render_nli_item(item: dict) -> Tuple[str, str]:
     """
@@ -135,13 +146,13 @@ def render_nli_item(item: dict) -> Tuple[str, str]:
     left_spans = [p[0] for p in pairs if p[0]]
     right_spans = [p[1] for p in pairs if p[1]]
 
-    left_hits = _find_non_overlapping(left, left_spans)     # [(s,e,span)]
+    left_hits = _find_non_overlapping(left, left_spans)  # [(s,e,span)]
     right_hits = _find_non_overlapping(right, right_spans)  # [(s,e,span)]
 
     # Build index of the positions by text to be able to link by content
     # Note: we map by order of pairs; for duplicates, we advance pointers.
     # Pointers ensure one-to-one alignment in the original nli_results order.
-    def _index_map(hits: List[Tuple[int,int,str]]) -> Dict[str, List[int]]:
+    def _index_map(hits: List[Tuple[int, int, str]]) -> Dict[str, List[int]]:
         d: Dict[str, List[int]] = {}
         for idx, (_s, _e, sp) in enumerate(hits):
             d.setdefault(sp, []).append(idx)
@@ -186,8 +197,20 @@ def render_nli_item(item: dict) -> Tuple[str, str]:
         return edge_color.get(("R", span_id), COLOR_MAP["neutral"])
 
     # Inject <span> wrappers
-    left_html  = _inject_spans(left,  [(s,e,sp) for i,(s,e,sp) in enumerate(left_hits)],  "p1", link_map_l2r, _color_getter_left)
-    right_html = _inject_spans(right, [(s,e,sp) for i,(s,e,sp) in enumerate(right_hits)], "p2", link_map_r2l, _color_getter_right)
+    left_html = _inject_spans(
+        left,
+        [(s, e, sp) for i, (s, e, sp) in enumerate(left_hits)],
+        "p1",
+        link_map_l2r,
+        _color_getter_left,
+    )
+    right_html = _inject_spans(
+        right,
+        [(s, e, sp) for i, (s, e, sp) in enumerate(right_hits)],
+        "p2",
+        link_map_r2l,
+        _color_getter_right,
+    )
 
     return left_html, right_html
 

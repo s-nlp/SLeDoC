@@ -12,7 +12,6 @@ run:
 	PYTHONPATH=$(APP_DIRS) $(PYTHON) -m uvicorn app.main:app --reload --port 7860
 
 app_dirs := .
-app_dirs_with_tests := . tests/
 tests_dir := tests/
 
 fmt:

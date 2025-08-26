@@ -7,10 +7,15 @@ from typing import Any, Dict, List
 
 import gradio as gr
 import openai
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_random_exponential
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 
-from app.openai_client import make_client
 from app.convert_to_our_format import LABEL_MAP_DEFAULT
+from app.openai_client import make_client
 from app.settings import nav_tag, side_bar
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -146,7 +151,9 @@ LABEL_MAP = LABEL_MAP_DEFAULT
     stop=stop_after_attempt(6),
     retry=retry_if_exception_type(openai.OpenAIError),
 )
-def _chat_completion(system_prompt: str, user_prompt: str, *, model_name: str, temperature: float) -> str:
+def _chat_completion(
+    system_prompt: str, user_prompt: str, *, model_name: str, temperature: float
+) -> str:
     client, model_id = make_client(model_name)
     resp = client.chat.completions.create(
         model=model_id,
@@ -169,8 +176,15 @@ def _build_user_prompt(p1: str, p2: str) -> str:
     return f"Параграф 1: {p1}\n\nПараграф 2: {p2}"
 
 
-def _llm_pairwise(p1: str, p2: str, *, system_prompt: str, model_name: str, temperature: float) -> List[dict]:
-    raw = _chat_completion(system_prompt, _build_user_prompt(p1, p2), model_name=model_name, temperature=temperature)
+def _llm_pairwise(
+    p1: str, p2: str, *, system_prompt: str, model_name: str, temperature: float
+) -> List[dict]:
+    raw = _chat_completion(
+        system_prompt,
+        _build_user_prompt(p1, p2),
+        model_name=model_name,
+        temperature=temperature,
+    )
     return _postprocess_to_list(raw)
 
 
@@ -200,7 +214,9 @@ def run_llm_nli_file(
     """
     input_path = Path(input_path)
     if output_path is None:
-        output_path = input_path.with_name(f"{input_path.stem}_llm_nli{input_path.suffix}")
+        output_path = input_path.with_name(
+            f"{input_path.stem}_llm_nli{input_path.suffix}"
+        )
     output_path = Path(output_path)
 
     label_map = label_map or LABEL_MAP
@@ -214,14 +230,25 @@ def run_llm_nli_file(
             continue
 
         try:
-            items = _llm_pairwise(p1, p2, system_prompt=system_prompt, model_name=model_name, temperature=temperature)
+            items = _llm_pairwise(
+                p1,
+                p2,
+                system_prompt=system_prompt,
+                model_name=model_name,
+                temperature=temperature,
+            )
         except Exception as exc:
-            out.append({
-                "input_1": p1, "input_2": p2,
-                "output_1": [], "output_2": [],
-                "nli_results": [], "nli_model": f"llm:{model_name}",
-                "error": str(exc),
-            })
+            out.append(
+                {
+                    "input_1": p1,
+                    "input_2": p2,
+                    "output_1": [],
+                    "output_2": [],
+                    "nli_results": [],
+                    "nli_model": f"llm:{model_name}",
+                    "error": str(exc),
+                }
+            )
             continue
 
         spans1, spans2 = [], []
@@ -250,16 +277,20 @@ def run_llm_nli_file(
                 res["anchor"] = str(it["anchor"])
             nli_results.append(res)
 
-        out.append({
-            "input_1": p1,
-            "input_2": p2,
-            "output_1": spans1,
-            "output_2": spans2,
-            "nli_results": nli_results,
-            "nli_model": f"llm:{model_name}",
-        })
+        out.append(
+            {
+                "input_1": p1,
+                "input_2": p2,
+                "output_1": spans1,
+                "output_2": spans2,
+                "nli_results": nli_results,
+                "nli_model": f"llm:{model_name}",
+            }
+        )
 
-    output_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    output_path.write_text(
+        json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return output_path
 
 
@@ -276,9 +307,13 @@ def build_demo():
                     file_types=[".json"],
                     file_count="single",
                 )
-                model = gr.Textbox(label="Model (OpenAI/OpenRouter id)", value="gpt-4o-mini")
+                model = gr.Textbox(
+                    label="Model (OpenAI/OpenRouter id)", value="gpt-4o-mini"
+                )
                 temp = gr.Slider(0.0, 1.0, value=0.2, step=0.05, label="Temperature")
-                sys_prompt = gr.Textbox(label="System prompt", value=SYSTEM_PROMPT, lines=12)
+                sys_prompt = gr.Textbox(
+                    label="System prompt", value=SYSTEM_PROMPT, lines=12
+                )
                 run_btn = gr.Button("Run LLM (extract+NLI)", variant="primary")
                 out_file = gr.File(label="Download NLI JSON", interactive=False)
                 out_path_box = gr.Textbox(label="Saved to", interactive=False)
@@ -288,7 +323,9 @@ def build_demo():
         def _run(json_file, model_name, temperature, system_prompt):
             if not json_file:
                 raise gr.Error("Upload pairs JSON first.")
-            input_path = Path(json_file.name if hasattr(json_file, "name") else json_file)
+            input_path = Path(
+                json_file.name if hasattr(json_file, "name") else json_file
+            )
             result_path = run_llm_nli_file(
                 input_path,
                 system_prompt=system_prompt,
@@ -299,7 +336,11 @@ def build_demo():
             prev = json.dumps(data[0] if data else {}, ensure_ascii=False, indent=2)
             return str(result_path), str(result_path), prev
 
-        run_btn.click(_run, inputs=[in_pairs, model, temp, sys_prompt], outputs=[out_file, out_path_box, preview])
+        run_btn.click(
+            _run,
+            inputs=[in_pairs, model, temp, sys_prompt],
+            outputs=[out_file, out_path_box, preview],
+        )
 
     return demo
 
