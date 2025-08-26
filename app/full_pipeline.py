@@ -26,7 +26,7 @@ from app.combine_pairs import _preview_html, choose, download
 # Stage 2
 from app.nli_predict import _list_models, run_nli_file
 
-# Stae 1+2 with LLM
+# Stage 1+2 with LLM
 from app.pipeline_llm import SYSTEM_PROMPT as LLM_NLI_SYSTEM_PROMPT
 from app.pipeline_llm import run_llm_nli_file
 
@@ -34,22 +34,18 @@ from .settings import nav_tag, side_bar
 
 
 def _align_stage0(doc1, doc2, model_id, device, batch_size, window_size, threshold):
-    # Resolve paths (either file-like or path-like)
     p1 = Path(doc1.name if hasattr(doc1, "name") else doc1)
     p2 = Path(doc2.name if hasattr(doc2, "name") else doc2)
 
-    # Paragraph prep (same as align_docs)
     paragraphs_a = merge_incomplete_sentences(get_paragraphs_from_docx(p1))
     paragraphs_b = filter_non_russian(
         separate_points(merge_incomplete_sentences(get_paragraphs_from_docx(p2)))
     )
 
-    # Embeddings
     enc = Encoder.load(model_id=model_id, device=device)
     emb_a = enc.encode(paragraphs_a, batch_size=int(batch_size))
     emb_b = enc.encode(paragraphs_b, batch_size=int(batch_size))
 
-    # Match windows
     matches = find_best_matches_with_window(
         paragraphs=paragraphs_a,
         paragraphs_bi=paragraphs_b,
@@ -132,7 +128,6 @@ def _pick_side(p: dict, left: bool) -> str:
 def _normalize_pairs(pairs: list[dict]) -> list[dict]:
     norm = []
     for p in pairs:
-        # backfill if missing OR empty/falsy
         if not p.get("premise_raw"):
             p = {**p, "premise_raw": _pick_side(p, True)}
         if not p.get("hypothesis_raw"):
@@ -152,9 +147,23 @@ def _safe_load_pairs(nli_json_path: str) -> list[dict]:
 EXTRA_CSS = """
 .progress-grid { display:grid; grid-template-columns: 28px 1fr; gap:10px; align-items:center; }
 .stage-dot{ width:18px; height:18px; border-radius:99px; background:#777; }
-.stage-dot.done{ background:#22c55e; }  /* green */
-.stage-dot.run{ background:#f59e0b; }   /* amber */
+.stage-dot.done{ background:#22c55e; }
+.stage-dot.run{ background:#f59e0b; }
 .stage-title{ font-weight:700; }
+.floating-panel{
+  position: fixed;
+  right: 1rem;
+  top: 4.5rem;
+  width: min(840px, 92vw);
+  max-height: 80vh;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 10px 30px rgba(0,0,0,.15);
+  border-radius: 12px;
+  padding: 12px;
+  z-index: 9999;
+}
 """
 
 
@@ -195,7 +204,6 @@ def _run_all(
     if not (doc1 and doc2):
         raise gr.Error("Please upload *both* .docx files.")
 
-    # placeholders so every yield has identical arity/order
     out_path_align = ""
     claims_path = ""
     nli_json_path = ""
@@ -209,7 +217,6 @@ def _run_all(
     right = ""
     final_preview = ""
 
-    # ===== 0) Align =====
     progress(0.02, desc="Loading & encoding documents")
     out_path_align, _preview = _align_stage0(
         doc1,
@@ -222,36 +229,33 @@ def _run_all(
     )
     progress_html = _stage_status(1)
 
-    # yield #1 (after Align)
     yield (
-        str(out_path_align),  # 1 file (download)
-        str(out_path_align),  # 2 aligned path
-        "",  # 3 claims path (not ready)
-        "",  # 4 nli path (not ready)
-        progress_html,  # 5 progress HTML
-        [],  # 6 pairs (state)
-        -1,  # 7 idx (state)
-        [],  # 8 seen (state)
-        [],  # 9 final_state (state)
-        "—",  # 10 label (markdown)
-        "",  # 11 left html
-        "",  # 12 right html
-        "",  # 13 final preview
+        str(out_path_align),
+        str(out_path_align),
+        "",
+        "",
+        progress_html,
+        [],
+        -1,
+        [],
+        [],
+        "—",
+        "",
+        "",
+        "",
     )
-    # ===== 1+2 =====
+
     if str(mode_12).lower().startswith("llm"):
-        # Fused route: one LLM call that does extraction + NLI
         progress(0.35, desc="LLM (1+2): extract + NLI")
         nli_json_path = run_llm_nli_file(
             input_path=out_path_align,
-            system_prompt=system_prompt,  # defaults to LLM_NLI_SYSTEM_PROMPT from UI
+            system_prompt=system_prompt,
             model_name=llm_model,
             temperature=float(llm_temp),
         )
-        claims_path = ""  # no standalone claims file in fused mode
-        progress_html = _stage_status(3)  # jump ahead (1 done, 2 done)
+        claims_path = ""
+        progress_html = _stage_status(3)
     else:
-        # ===== 1) Extract claims =====
         progress(0.35, desc="Extracting claims with LLM")
         claims_path = run_claim_extraction(
             input_path=out_path_align,
@@ -261,7 +265,6 @@ def _run_all(
         )
         progress_html = _stage_status(2)
 
-        # yield #2 (after Claims)
         yield (
             str(out_path_align),
             str(out_path_align),
@@ -278,13 +281,11 @@ def _run_all(
             "",
         )
 
-        # ===== 2) NLI =====
         progress(0.65, desc="Running NLI over claim pairs")
         with open(claims_path, "rb") as f:
             nli_json_path = run_nli_file(nli_model, f)
         progress_html = _stage_status(3)
 
-    # ===== 3) Prepare combiner UI =====
     raw_pairs = _safe_load_pairs(nli_json_path)
     pairs = _normalize_pairs(raw_pairs)
 
@@ -292,7 +293,6 @@ def _run_all(
         f"[Combiner] pairs={len(pairs)}; keys0={list(pairs[0].keys()) if pairs else '—'}"
     )
 
-    # show the first pair if any; don't over-filter here
     idx0 = 0 if pairs else -1
     label = "No aligned pairs" if idx0 == -1 else f"Ready • {len(pairs)} pairs"
     if idx0 == -1:
@@ -307,17 +307,16 @@ def _run_all(
 
     progress(0.98, desc="Ready")
 
-    # yield #3 (final)
     yield (
         str(out_path_align),
         str(out_path_align),
         str(claims_path),
         str(nli_json_path),
         progress_html,
-        pairs,  # <-- normalized pairs go into state
+        pairs,
         idx0,
-        [],  # seen starts empty
-        [],  # final_state
+        [],
+        [],
         label,
         left,
         right,
@@ -327,7 +326,6 @@ def _run_all(
 
 with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
     gr.HTML(nav_tag)
-
     gr.Markdown("## Full Pipeline")
 
     with gr.Row():
@@ -335,57 +333,91 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
             gr.Markdown("**Upload documents** (.docx)")
             doc1 = gr.File(label="Document A", file_types=[".docx"])
             doc2 = gr.File(label="Document B", file_types=[".docx"])
-            with gr.Accordion("Embedding settings", open=False):
-                embed_model = gr.Dropdown(
-                    choices=[
-                        "intfloat/multilingual-e5-large",
-                        "intfloat/multilingual-e5-base",
-                    ],
-                    value="intfloat/multilingual-e5-base",
-                    label="Embedding model",
-                )
-                device = gr.Dropdown(
-                    choices=["cpu", "cuda"], value="cpu", label="Device"
-                )
-                batch_size = gr.Slider(8, 128, value=64, step=8, label="Batch size")
-                window_size = gr.Slider(5, 200, value=50, step=5, label="Window size")
-                threshold = gr.Slider(
-                    0.5, 0.99, value=0.90, step=0.01, label="Similarity threshold"
-                )
-            with gr.Accordion("Claim extraction (LLM)", open=False):
-                system_prompt = gr.Textbox(
-                    value=DEFAULT_SYSTEM_PROMPT, label="System prompt", lines=10
-                )
-                llm_model = gr.Textbox(
-                    value="gpt-4o", label="Model name (OpenAI/OpenRouter alias)"
-                )
-                llm_temp = gr.Slider(
-                    0.0, 1.0, value=0.2, step=0.05, label="Temperature"
-                )
-            with gr.Accordion("NLI model", open=False):
-                nli_model = gr.Dropdown(
-                    label="Local NLI model",
-                    choices=_list_models(),
-                    value=_list_models()[0] if _list_models() else None,
-                )
-            with gr.Accordion("Stage 1+2 mode", open=True):
-                mode_12 = gr.Radio(
-                    choices=["LLM (single-step)", "Not LLM (two-step)"],
-                    value="LLM (single-step)",
-                    label="How to run stages 1+2?",
-                )
+
+        with gr.Row():
+            settings_btn = gr.Button("⚙️ Настройки", variant="secondary")
+            settings_open = gr.Checkbox(False, visible=False, label="settings_open")
+            with gr.Column(
+                visible=False, elem_classes=["floating-panel"]
+            ) as settings_panel:
+                with gr.Tabs():
+                    with gr.Accordion("Embedding settings", open=False):
+                        embed_model = gr.Dropdown(
+                            choices=[
+                                "intfloat/multilingual-e5-large",
+                                "intfloat/multilingual-e5-base",
+                            ],
+                            value="intfloat/multilingual-e5-base",
+                            label="Embedding model",
+                        )
+                        device = gr.Dropdown(
+                            choices=["cpu", "cuda"], value="cpu", label="Device"
+                        )
+                        batch_size = gr.Slider(
+                            8, 128, value=64, step=8, label="Batch size"
+                        )
+                        window_size = gr.Slider(
+                            5, 200, value=50, step=5, label="Window size"
+                        )
+                        threshold = gr.Slider(
+                            0.5,
+                            0.99,
+                            value=0.90,
+                            step=0.01,
+                            label="Similarity threshold",
+                        )
+
+                    with gr.Accordion("Claim extraction (LLM)", open=False):
+                        system_prompt = gr.Textbox(
+                            value=LLM_NLI_SYSTEM_PROMPT, label="System prompt", lines=10
+                        )
+                        llm_model = gr.Textbox(value="gpt-4o", label="Model name")
+                        llm_temp = gr.Slider(
+                            0.0, 1.0, value=0.2, step=0.05, label="Temperature"
+                        )
+
+                    with gr.Accordion("NLI model", open=False):
+                        nli_model = gr.Dropdown(
+                            label="Local NLI model",
+                            choices=_list_models(),
+                            value=_list_models()[0] if _list_models() else None,
+                        )
+                    with gr.Accordion("Stage 1+2 mode", open=True):
+                        mode_12 = gr.Radio(
+                            choices=["LLM (single-step)", "Not LLM (two-step)"],
+                            value="LLM (single-step)",
+                            label="How to run stages 1+2?",
+                        )
+                    with gr.Accordion("Artifacts", open=False):
+                        align_out_file = gr.File(
+                            label="Aligned JSON (download)", interactive=False
+                        )
+                        align_out = gr.Textbox(
+                            label="Aligned pairs JSON (path)", interactive=False
+                        )
+                        claims_out = gr.Textbox(
+                            label="Claims JSON (path)", interactive=False
+                        )
+                        nli_out = gr.Textbox(label="NLI JSON (path)", interactive=False)
+
+            def _toggle_open(val: bool):
+                new_val = not bool(val)
+                return new_val, gr.update(visible=new_val)
+
+            settings_btn.click(
+                _toggle_open,
+                inputs=settings_open,
+                outputs=[settings_open, settings_panel],
+            )
             run_btn = gr.Button("Run full pipeline", variant="primary")
 
     with gr.Row():
         with gr.Column(scale=1):
             gr.Markdown("**3. Build final text**")
-
-            # States used by the chooser
             pairs_state = gr.State([])
             idx_state = gr.State(-1)
             seen_state = gr.State([])
             final_state = gr.State([])
-
             label_md = gr.Markdown("—")
             with gr.Row():
                 left_html = gr.HTML("")
@@ -394,22 +426,13 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
                 left_btn = gr.Button("⬅️ Choose left")
                 skip_btn = gr.Button("Skip")
                 right_btn = gr.Button("Choose right ➡️")
-
-            # ↓↓↓ move the box here, full width
             final_preview = gr.Textbox(label="Accumulated text", lines=8)
             download_btn = gr.Button("⬇️ Download final text")
             download_file = gr.File(label="final_text.txt", interactive=False)
 
-    # --- bottom progress ---
     gr.Markdown("---")
     gr.Markdown("**Progress**")
     progress_html = gr.HTML(_stage_status(0))
-
-    gr.Markdown("**Artifacts**")
-    align_out_file = gr.File(label="Aligned JSON (download)", interactive=False)
-    align_out = gr.Textbox(label="Aligned pairs JSON (path)", interactive=False)
-    claims_out = gr.Textbox(label="Claims JSON (path)", interactive=False)
-    nli_out = gr.Textbox(label="NLI JSON (path)", interactive=False)
 
     run_btn.click(
         fn=_run_all,
@@ -445,7 +468,6 @@ with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
         show_progress=True,
     )
 
-    # Hook up the chooser controls
     def _wrap_choice(choice, pairs, idx, seen, final):
         return choose(choice, pairs, idx, seen, final)
 
