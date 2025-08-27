@@ -428,10 +428,16 @@ with gr.Blocks(
                 with gr.Column(scale=3):
                     doc1 = gr.File(label="Document A (.docx)", file_types=[".docx"])
                     doc2 = gr.File(label="Document B (.docx)", file_types=[".docx"])
-                with gr.Column(scale=2):
+
+            with gr.Accordion("⚙️ Settings", open=False):
+                with gr.Row():
                     use_llm_12 = gr.Checkbox(
                         value=True, label="Use combined Extract+NLI (LLM)"
                     )
+                    llm_model = gr.Textbox(
+                        value="gpt-4o-mini", label="LLM model (for combined 1+2)"
+                    )
+                with gr.Row():
                     nli_model = gr.Dropdown(
                         label="NLI model (when not using LLM 1+2)",
                         choices=_list_models(),
@@ -440,8 +446,6 @@ with gr.Blocks(
                     device = gr.Dropdown(
                         choices=["cpu", "cuda"], value="cpu", label="Device"
                     )
-
-            with gr.Accordion("⚙️ Settings", open=False):
                 with gr.Row():
                     batch_size = gr.Slider(
                         8, 128, value=64, step=8, label="Batch size (embed)"
