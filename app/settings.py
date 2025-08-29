@@ -179,5 +179,42 @@ CUSTOM_JS = """
     document.querySelectorAll('span.hl:not(.selected)')
       .forEach(el => el.classList.add('dimmed'));
   });
+  // ---- Bridge clicks from left viewer to hidden Gradio Textbox (#bridge_click) ----
+  const findBridgeBox = () =>
+    document.querySelector('#bridge_click textarea') ||
+    document.querySelector('#bridge_click input');
+
+  document.addEventListener('click', function (e) {
+    // Click on a highlighted span with mapping metadata
+    const span = e.target.closest('.hl');
+    if (span && span.hasAttribute('data-pair') && span.hasAttribute('data-left')) {
+      e.stopPropagation();
+      // local selection highlight
+      document.querySelectorAll('.hl.selected').forEach(el => el.classList.remove('selected'));
+      span.classList.add('selected');
+
+      const pidx = span.getAttribute('data-pair');
+      const lidx = span.getAttribute('data-left');
+      const box = findBridgeBox();
+      if (box) {
+        box.value = `S:${pidx}:${lidx}`;
+        box.dispatchEvent(new Event('input',  { bubbles: true }));
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return;
+    }
+
+    // Click on a paragraph box (card)
+    const para = e.target.closest('.para-box');
+    if (para && para.hasAttribute('data-idx')) {
+      const idx = para.getAttribute('data-idx');
+      const box = findBridgeBox();
+      if (box) {
+        box.value = `P:${idx}`;
+        box.dispatchEvent(new Event('input',  { bubbles: true }));
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+  }, true);
 }
 """

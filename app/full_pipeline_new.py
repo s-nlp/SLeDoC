@@ -240,7 +240,8 @@ def _render_left(blocks: List[Dict[str, Any]]) -> str:
 
     html_parts.append("</div>")  # left-pane
     html_parts.append("</div>")  # viewer-wrap
-    html_parts.append(_BRIDGE_JS)
+    # Inject inline bridge JS (handled via CUSTOM_JS)
+    # html_parts.append(_BRIDGE_JS)
     return "\n".join(html_parts)
 
 
@@ -590,6 +591,12 @@ with gr.Blocks(
             )
             # connect bridge
             bridge_click.change(
+                _bridge_combo,
+                inputs=[pairs_state, bridge_click],
+                outputs=[right_html, pair_picker],
+            )
+            # react to `input` events (what JS emits)
+            bridge_click.input(
                 _bridge_combo,
                 inputs=[pairs_state, bridge_click],
                 outputs=[right_html, pair_picker],
