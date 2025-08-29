@@ -180,26 +180,28 @@ _BRIDGE_JS = r"""
     el.value = val;
     el.dispatchEvent(new Event('input', {bubbles:true}));
   }
-  // paragraph clicks (on card background)
-  document.querySelectorAll('.para-box').forEach(function(box){
-    const idx = box.getAttribute('data-idx');
-    box.addEventListener('click', function(e){
-      if (e.target && e.target.classList.contains('hl')) return;
-      emitBridge('P:'+idx);
-    });
-  });
-  // claim span clicks
-  document.querySelectorAll('.hl').forEach(function(span){
-    span.addEventListener('click', function(e){
+
+  // Use event delegation so listeners survive HTML re-renders
+  document.addEventListener('click', function(e){
+    // Claim span click
+    const span = e.target.closest('.hl');
+    if (span) {
       e.stopPropagation();
-      // local selection visuals (non-authoritative)
+      // local selection visuals
       document.querySelectorAll('.hl.selected').forEach(el=>el.classList.remove('selected'));
       span.classList.add('selected');
       const pidx = span.getAttribute('data-pair');
       const lidx = span.getAttribute('data-left');
-      emitBridge('S:'+pidx+':'+lidx);
-    });
-  });
+      if (pidx !== null && lidx !== null) emitBridge('S:'+pidx+':'+lidx);
+      return;
+    }
+    // Paragraph card click
+    const box = e.target.closest('.para-box');
+    if (box && box.hasAttribute('data-idx')) {
+      const idx = box.getAttribute('data-idx');
+      emitBridge('P:'+idx);
+    }
+  }, true);
 })();
 </script>
 """
@@ -237,7 +239,6 @@ def _render_left(blocks: List[Dict[str, Any]]) -> str:
         )
 
     html_parts.append("</div>")  # left-pane
-    html_parts.append('<div class="right-pane"><div id="right-mirror"></div></div>')
     html_parts.append("</div>")  # viewer-wrap
     html_parts.append(_BRIDGE_JS)
     return "\n".join(html_parts)
@@ -414,6 +415,32 @@ def _bridge_update(pairs: List[Dict[str, Any]], bridge_value: str) -> str:
     return _render_right(pairs, (0, None))
 
 
+def _on_pick(pairs, choice):
+    if not pairs or not choice:
+        return _render_right(pairs or [], (0, None))
+    try:
+        idx = int(str(choice)) - 1
+    except Exception:
+        idx = 0
+    return _render_right(pairs, (idx, None))
+
+
+def _bridge_combo(ps, v):
+    # default
+    k, l = 0, None
+    try:
+        if v and v.startswith("P:"):
+            k = int(v.split(":", 1)[1])
+            return _render_right(ps or [], (k, None)), gr.update(value=str(k + 1))
+        if v and v.startswith("S:"):
+            _t, a, b = v.split(":")
+            k, l = int(a), int(b)
+            return _render_right(ps or [], (k, l)), gr.update(value=str(k + 1))
+    except Exception:
+        pass
+    return _render_right(ps or [], (k, None)), gr.update(value=str(k + 1))
+
+
 # ----------------------------- UI -----------------------------
 with gr.Blocks(
     css=EXTRA_CSS, js=CUSTOM_JS, title="Semantic Mismatch — Full Pipeline"
@@ -468,8 +495,16 @@ with gr.Blocks(
             run_btn = gr.Button("Run full pipeline", variant="primary")
 
             with gr.Row():
-                left_html = gr.HTML(label="Document A (claims)", value="")
+                left_html = gr.HTML(
+                    label="Document A (claims)", value="", elem_id="left_pane"
+                )
                 right_html = gr.HTML(label="Document B (matches)", value="")
+            pair_picker = gr.Radio(
+                choices=[],
+                value=None,
+                label="Show Document B for paragraph…",
+                interactive=True,
+            )
             # bridge for click events
             bridge_click = gr.Textbox(visible=False, elem_id="bridge_click")
 
@@ -503,6 +538,8 @@ with gr.Blocks(
                     float(thr),
                     sys_prompt,
                 )
+                choices = [str(i + 1) for i in range(len(pairs))]
+                default = choices[0] if choices else None
                 return (
                     left,
                     right,
@@ -513,6 +550,7 @@ with gr.Blocks(
                         value=json.loads(Path(align_path).read_text(encoding="utf-8")),
                         visible=False,
                     ),
+                    gr.update(choices=choices, value=default, interactive=True),
                 )
 
             run_btn.click(
@@ -535,6 +573,7 @@ with gr.Blocks(
                     align_path_state,
                     pairs_path_state,
                     artifacts_json,
+                    pair_picker,
                 ],
             )
 
@@ -544,12 +583,16 @@ with gr.Blocks(
                 return gr.update(value=p, visible=True)
 
             run_btn.click(_export, inputs=pairs_path_state, outputs=dl_pairs)
-
+            pair_picker.change(
+                _on_pick,
+                inputs=[pairs_state, pair_picker],
+                outputs=right_html,
+            )
             # connect bridge
             bridge_click.change(
-                lambda ps, v: _bridge_update(ps or [], v or "P:0"),
+                _bridge_combo,
                 inputs=[pairs_state, bridge_click],
-                outputs=right_html,
+                outputs=[right_html, pair_picker],
             )
 
 # Fast launch guard
