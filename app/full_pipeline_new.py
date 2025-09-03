@@ -40,7 +40,7 @@ EXTRA_CSS = (
 /* dual-pane viewer layout */
 .viewer-wrap { display:flex; gap:16px; align-items:flex-start; }
 .left-pane  { flex: 2 1 0; min-width: 420px; }
-.right-pane { flex: 1 1 0; position:sticky; top:10px; max-height:78vh; overflow:auto; }
+.right-pane { flex: 1 1 0; position: static; max-height: 80vh; overflow:auto; }
 
 /* paragraph card */
 .para-box{
@@ -591,13 +591,17 @@ with gr.Blocks(
             run_btn = gr.Button("Run full pipeline", variant="primary")
 
             with gr.Row():
-                left_html = gr.HTML(
-                    label="Document A (claims)", value="", elem_id="left_pane"
-                )
-                right_html = gr.HTML(
-                    label="Document B (matches)", value="", elem_id="right_pane"
-                )
-                reason_html = gr.HTML(label="Reasoning", value="", elem_id="reason_box")
+                with gr.Column(scale=3):
+                    left_html = gr.HTML(
+                        label="Document A (claims)", value="", elem_id="left_pane"
+                    )
+                with gr.Column(scale=2):
+                    right_html = gr.HTML(
+                        label="Document B (matches)", value="", elem_id="right_pane"
+                    )
+                    reason_html = gr.HTML(
+                        label="Reasoning", value="", elem_id="reason_box"
+                    )
             pair_picker = gr.Radio(
                 choices=[],
                 value=None,

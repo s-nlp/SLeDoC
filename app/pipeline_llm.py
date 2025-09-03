@@ -313,6 +313,9 @@ def run_llm_nli_file(
                 "hypothesis_raw": s2,
                 "label": mapped,
                 "confidence": None,
+                "reasoning": it.get("reasoning")
+                or it.get("explanation")
+                or it.get("reason"),
             }
             if it.get("anchor"):
                 res["anchor"] = str(it["anchor"])
