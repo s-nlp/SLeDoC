@@ -69,6 +69,27 @@ EXTRA_CSS = (
   border:1px solid #adb5bd; padding:12px; border-radius:12px; background:#fafafa;
   min-height:140px;
 }
+
+/* legend + confidence UI */
+.toolbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:8px 0; }
+.legend { display:flex; gap:12px; align-items:center; font-size:12px; color:#475569; }
+.legend .key { display:inline-flex; align-items:center; gap:6px; }
+.legend .dot { width:10px; height:10px; border-radius:2px; display:inline-block; }
+.legend .dot.ent { background:#22c55e; } /* entailment */
+.legend .dot.con { background:#f43f5e; } /* contradiction */
+.legend .dot.neu { background:#3b82f6; } /* addition/neutral */
+#conf_box { font-weight:600; }
+
+/* dynamic heights */
+.para-box{ min-height: unset; }
+.mirror-box{ min-height: unset; }
+
+/* right pane: independent scroll, not sticky */
+#right_pane{ max-height: 80vh; overflow: auto; position: static; }
+
+/* reasoning panel */
+.reason-wrap{ margin-top:8px; display:flex; flex-direction:column; gap:8px; }
+.reason-card{ border:1px dashed #cbd5e1; background:#fff; padding:8px 10px; border-radius:10px; font-size:14px; }
 """
 )
 
@@ -170,6 +191,19 @@ def _link_map_for_pair(
     return out_links, left_color
 
 
+def _legend_html() -> str:
+    return (
+        '<div class="toolbar">'
+        '<div id="conf_box">Confidence: —</div>'
+        '<div class="legend">'
+        '<span class="key"><span class="dot ent"></span> entailment (equivalent)</span>'
+        '<span class="key"><span class="dot con"></span> contradiction</span>'
+        '<span class="key"><span class="dot neu"></span> addition (neutral)</span>'
+        "</div>"
+        "</div>"
+    )
+
+
 # ----------------------------- Renderers -----------------------------
 _BRIDGE_JS = r"""
 <script>
@@ -212,7 +246,7 @@ def _render_left(blocks: List[Dict[str, Any]]) -> str:
     Big left pane: for each pair, show Document A claims as spans, colored by worst NLI link.
     If no claims available for a block, fall back to raw paragraph text.
     """
-    html_parts = ['<div class="viewer-wrap"><div class="left-pane">']
+    html_parts = ['<div class="viewer-wrap"><div class="left-pane">', _legend_html()]
     for pi, b in enumerate(blocks):
         out1 = b.get("output_1") or []
         links, left_color = _link_map_for_pair(b)
@@ -240,8 +274,6 @@ def _render_left(blocks: List[Dict[str, Any]]) -> str:
 
     html_parts.append("</div>")  # left-pane
     html_parts.append("</div>")  # viewer-wrap
-    # Inject inline bridge JS (handled via CUSTOM_JS)
-    # html_parts.append(_BRIDGE_JS)
     return "\n".join(html_parts)
 
 
@@ -302,6 +334,57 @@ def _render_right(
         <div>{body}</div>
       </div>
     """
+
+
+REASON_BY_LABEL = {
+    "equivalent": "спаны идентичны",
+    "entailment": "спаны идентичны",
+    "contradiction": "противоречие между утверждениями",
+    "addition": "дополнение / новая информация",
+    "neutral": "дополнение / новая информация",
+}
+
+
+def _render_reason(blocks, focus):
+    k, i_left = focus
+    if not blocks or k < 0 or k >= len(blocks) or i_left is None:
+        return '<div class="reason-wrap"></div>'
+    b = blocks[k]
+    out1 = b.get("output_1") or []
+    if not (0 <= i_left < len(out1)):
+        return '<div class="reason-wrap"></div>'
+    left_span = (out1[i_left].get("claim") or out1[i_left].get("input") or "").strip()
+
+    items = []
+    for r in b.get("nli_results") or []:
+        prem = str(r.get("premise_raw") or r.get("premise") or "")
+        hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+        lab = str(r.get("label") or "").lower()
+        if prem == left_span or hyp == left_span:
+            reason = (
+                r.get("explanation")
+                or r.get("reason")
+                or r.get("reasoning")
+                or REASON_BY_LABEL.get(lab, "")
+            )
+            if reason:
+                items.append(
+                    f'<div class="reason-card">{html.escape(str(reason))}</div>'
+                )
+
+    if not items:
+        # fallback: worst label among links of this left span
+        links, _ = _link_map_for_pair(b)
+        sev = {"contradiction": 3, "neutral": 2, "entailment": 1}
+        worst = None
+        for _rj, lbl in links.get(i_left, []):
+            if sev.get(lbl, 0) > sev.get(worst or "", 0):
+                worst = lbl
+        reason = REASON_BY_LABEL.get(worst or "neutral", "")
+        if reason:
+            items = [f'<div class="reason-card">{html.escape(str(reason))}</div>']
+
+    return '<div class="reason-wrap">' + "".join(items) + "</div>"
 
 
 # ----------------------------- Pipeline -----------------------------
@@ -417,29 +500,41 @@ def _bridge_update(pairs: List[Dict[str, Any]], bridge_value: str) -> str:
 
 
 def _on_pick(pairs, choice):
-    if not pairs or not choice:
-        return _render_right(pairs or [], (0, None))
+    if not pairs:
+        return _render_right([], (0, None)), _render_reason([], (0, None))
     try:
-        idx = int(str(choice)) - 1
+        idx = max(0, int(str(choice)) - 1) if choice else 0
     except Exception:
         idx = 0
-    return _render_right(pairs, (idx, None))
+    # reason for paragraph pick (no specific left span) is empty by design
+    return _render_right(pairs, (idx, None)), _render_reason(pairs, (idx, None))
 
 
 def _bridge_combo(ps, v):
-    # default
     k, l = 0, None
     try:
         if v and v.startswith("P:"):
             k = int(v.split(":", 1)[1])
-            return _render_right(ps or [], (k, None)), gr.update(value=str(k + 1))
+            return (
+                _render_right(ps or [], (k, None)),
+                _render_reason(ps or [], (k, None)),
+                gr.update(value=str(k + 1)),
+            )
         if v and v.startswith("S:"):
             _t, a, b = v.split(":")
             k, l = int(a), int(b)
-            return _render_right(ps or [], (k, l)), gr.update(value=str(k + 1))
+            return (
+                _render_right(ps or [], (k, l)),
+                _render_reason(ps or [], (k, l)),
+                gr.update(value=str(k + 1)),
+            )
     except Exception:
         pass
-    return _render_right(ps or [], (k, None)), gr.update(value=str(k + 1))
+    return (
+        _render_right(ps or [], (k, None)),
+        _render_reason(ps or [], (k, None)),
+        gr.update(value=str(k + 1)),
+    )
 
 
 # ----------------------------- UI -----------------------------
@@ -499,7 +594,10 @@ with gr.Blocks(
                 left_html = gr.HTML(
                     label="Document A (claims)", value="", elem_id="left_pane"
                 )
-                right_html = gr.HTML(label="Document B (matches)", value="")
+                right_html = gr.HTML(
+                    label="Document B (matches)", value="", elem_id="right_pane"
+                )
+                reason_html = gr.HTML(label="Reasoning", value="", elem_id="reason_box")
             pair_picker = gr.Radio(
                 choices=[],
                 value=None,
@@ -554,8 +652,52 @@ with gr.Blocks(
                     gr.update(choices=choices, value=default, interactive=True),
                 )
 
+            def _run2(
+                doc1_f,
+                doc2_f,
+                use_llm,
+                nli_model_id,
+                device_v,
+                bs,
+                win,
+                thr,
+                sys_prompt,
+            ):
+                (align_path, pairs_path, preview, left, right, pairs) = _orchestrate(
+                    doc1_f,
+                    doc2_f,
+                    bool(use_llm),
+                    nli_model_id,
+                    device_v,
+                    int(bs),
+                    int(win),
+                    float(thr),
+                    sys_prompt,
+                )
+                # reasoning is empty until a specific span is clicked
+                reason = _render_reason(pairs or [], (0, None))
+
+                # Prepare Radio choices "1..N"
+                choices = [str(i + 1) for i in range(len(pairs))]
+                default = choices[0] if choices else None
+
+                return (
+                    left,  # left_html
+                    right,  # right_html
+                    reason,  # reason_html
+                    pairs,  # pairs_state
+                    align_path,  # align_path_state
+                    pairs_path,  # pairs_path_state
+                    gr.update(
+                        value=json.loads(preview), visible=False
+                    ),  # artifacts_json
+                    gr.update(
+                        choices=choices, value=default, interactive=True
+                    ),  # pair_picker
+                )
+
             run_btn.click(
-                _run,
+                _run2,
                 inputs=[
                     doc1,
                     doc2,
@@ -570,6 +712,7 @@ with gr.Blocks(
                 outputs=[
                     left_html,
                     right_html,
+                    reason_html,
                     pairs_state,
                     align_path_state,
                     pairs_path_state,
@@ -587,19 +730,19 @@ with gr.Blocks(
             pair_picker.change(
                 _on_pick,
                 inputs=[pairs_state, pair_picker],
-                outputs=right_html,
+                outputs=[right_html, reason_html],
             )
             # connect bridge
             bridge_click.change(
                 _bridge_combo,
                 inputs=[pairs_state, bridge_click],
-                outputs=[right_html, pair_picker],
+                outputs=[right_html, reason_html, pair_picker],
             )
             # react to `input` events (what JS emits)
             bridge_click.input(
                 _bridge_combo,
                 inputs=[pairs_state, bridge_click],
-                outputs=[right_html, pair_picker],
+                outputs=[right_html, reason_html, pair_picker],
             )
 
 # Fast launch guard
