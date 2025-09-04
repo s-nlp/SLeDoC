@@ -70,6 +70,8 @@ EXTRA_CSS = (
   min-height:140px;
 }
 
+.anch{ font-size:11px; opacity:.8; margin-left:4px; text-decoration:none; }
+
 /* legend + confidence UI */
 .toolbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:8px 0; }
 .legend { display:flex; gap:12px; align-items:center; font-size:12px; color:#475569; }
@@ -84,8 +86,8 @@ EXTRA_CSS = (
 .para-box{ min-height: unset; }
 .mirror-box{ min-height: unset; }
 
-/* right pane: independent scroll, not sticky */
-#right_pane{ max-height: 80vh; overflow: auto; position: static; }
+/* right pane: flows with page scroll (no inner scroll, no sticky) */
+#right_pane{ position: static; }
 
 /* reasoning panel */
 .reason-wrap{ margin-top:8px; display:flex; flex-direction:column; gap:8px; }
@@ -298,7 +300,7 @@ def _render_right(
     label_for_right: Dict[int, str] = {}
     severity = {"contradiction": 3, "neutral": 2, "entailment": 1}
     if i_left is None:
-        # aggregate across all left links to compute worst label per right claim
+        # worst label for each right claim across all left links
         for li, pairs in links.items():
             for rj, lbl in pairs:
                 if severity.get(lbl, 0) > severity.get(label_for_right.get(rj, ""), 0):
@@ -314,6 +316,20 @@ def _render_right(
                 label_for_right[rj] = lbl
         show_indices = sorted(label_for_right.keys())
 
+    # collect anchors for addition/neutral right spans
+    anchor_for_right: Dict[int, str] = {}
+    for rr in (b.get("nli_results") or []):
+        lblr = str(rr.get("label") or "").lower()
+        if lblr in ("neutral", "addition"):
+            hyp = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
+            anc = rr.get("anchor")
+            if not anc:
+                continue
+            for jj, cc in enumerate(out2):
+                txtj = (cc.get("claim") or cc.get("input") or "")
+                if txtj == hyp and jj not in anchor_for_right:
+                    anchor_for_right[jj] = str(anc)
+                    break
     # build HTML
     if show_indices:
         spans = []
@@ -321,8 +337,12 @@ def _render_right(
             c = out2[j]
             txt = _escape(c.get("claim") or c.get("input") or "")
             cls = "hl " + (label_for_right.get(j, "") or "")
+            # add anchor icon + tooltip for addition/neutral
+            anchor_sup = ""
+            if j in anchor_for_right:
+                anchor_sup = f' <sup class="anch" title="anchor: {_escape(anchor_for_right[j])}">🔗</sup>'
             spans.append(
-                f'<span class="{cls}" data-pair="{k}" data-right="{j}">{txt}</span>'
+                f'<span id="add-R-{k}-{j}" class="{cls}" data-pair="{k}" data-right="{j}">{txt}</span>{anchor_sup}'
             )
         body = "<br>".join(spans)
     else:
@@ -402,12 +422,23 @@ def _align_stage0(
     """
     p1 = Path(doc1.name if hasattr(doc1, "name") else doc1)
     p2 = Path(doc2.name if hasattr(doc2, "name") else doc2)
-
-    paragraphs_a = merge_incomplete_sentences(get_paragraphs_from_docx(p1))
-    # For B you separated points & filtered Russian previously
-    paragraphs_b = filter_non_russian(
-        separate_points(merge_incomplete_sentences(get_paragraphs_from_docx(p2)))
-    )
+    
+    # Enforce document length restriction (≤ 5000 characters each)
+    try:
+        paragraphs_a = merge_incomplete_sentences(get_paragraphs_from_docx(p1))
+        paragraphs_b = filter_non_russian(
+            separate_points(merge_incomplete_sentences(get_paragraphs_from_docx(p2)))
+        )
+        len_a = sum(len(x) for x in paragraphs_a)
+        len_b = sum(len(x) for x in paragraphs_b)
+        if len_a > 5000 or len_b > 5000:
+            gr.Warning(
+                f"Document too long: A={len_a} chars, B={len_b} chars. "
+                f"Limit is 5000. Processing stopped."
+            )
+            raise RuntimeError("Document length exceeds 5000 characters.")
+    except Exception:
+        pass
 
     enc = Encoder.load(model_id=model_id, device=device)
     emb_a = enc.encode(paragraphs_a, batch_size=int(batch_size))
