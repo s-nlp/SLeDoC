@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 import openai
+from openai import AsyncOpenAI
 
 _OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 _OPENAI_BASE = "https://api.openai.com/v1"
@@ -30,3 +31,24 @@ def make_client(model: str):
         raise RuntimeError(f"Missing {kind}_API_KEY in environment.")
 
     return openai.OpenAI(api_key=api_key, base_url=base_url), model_id
+
+
+def make_async_client(model: str):
+    """Async variant of `make_client` that returns (AsyncOpenAI(), model_id)."""
+    model = (model or "").strip()
+    use_openrouter = ":" in model  # e.g. "openai/gpt-4o-mini"
+
+    if use_openrouter:
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        base_url = _OPENROUTER_BASE
+        model_id = model  # keep provider prefix
+    else:
+        api_key = os.getenv("OPENAI_API_KEY")
+        base_url = _OPENAI_BASE
+        model_id = model
+
+    if not api_key:
+        kind = "OPENROUTER" if use_openrouter else "OPENAI"
+        raise RuntimeError(f"Missing {kind}_API_KEY in environment.")
+
+    return AsyncOpenAI(api_key=api_key, base_url=base_url), model_id

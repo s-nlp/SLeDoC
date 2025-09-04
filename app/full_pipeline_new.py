@@ -318,7 +318,7 @@ def _render_right(
 
     # collect anchors for addition/neutral right spans
     anchor_for_right: Dict[int, str] = {}
-    for rr in (b.get("nli_results") or []):
+    for rr in b.get("nli_results") or []:
         lblr = str(rr.get("label") or "").lower()
         if lblr in ("neutral", "addition"):
             hyp = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
@@ -326,7 +326,7 @@ def _render_right(
             if not anc:
                 continue
             for jj, cc in enumerate(out2):
-                txtj = (cc.get("claim") or cc.get("input") or "")
+                txtj = cc.get("claim") or cc.get("input") or ""
                 if txtj == hyp and jj not in anchor_for_right:
                     anchor_for_right[jj] = str(anc)
                     break
@@ -422,7 +422,7 @@ def _align_stage0(
     """
     p1 = Path(doc1.name if hasattr(doc1, "name") else doc1)
     p2 = Path(doc2.name if hasattr(doc2, "name") else doc2)
-    
+
     # Enforce document length restriction (≤ 5000 characters each)
     try:
         paragraphs_a = merge_incomplete_sentences(get_paragraphs_from_docx(p1))
@@ -499,7 +499,7 @@ def _orchestrate(
         # Stage 2 (nli_predict.run_nli_file accepts (model_name, file_obj-or-path))
         nli_out_path = run_nli_file(
             nli_model_name or (_list_models()[0] if _list_models() else None),
-            claims_path,
+            str(claims_path),
         )
         pairs_path = nli_out_path
         pairs = json.loads(Path(pairs_path).read_text(encoding="utf-8"))

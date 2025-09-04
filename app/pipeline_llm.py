@@ -1,13 +1,14 @@
-# app/pipeline_llm.py
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import gradio as gr
 import openai
 from tenacity import (
+    AsyncRetrying,
     retry,
     retry_if_exception_type,
     stop_after_attempt,
@@ -15,11 +16,16 @@ from tenacity import (
 )
 
 from app.convert_to_our_format import LABEL_MAP_DEFAULT
-from app.openai_client import make_client
+from app.openai_client import make_async_client, make_client
 from app.settings import nav_tag, side_bar
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Твой системный промпт (без изменений)
+
+def _to_path(x: str | Path) -> Path:
+    if isinstance(x, Path):
+        return x
+    return Path(str(x))
+
+
 SYSTEM_PROMPT = """Ты — юридический аналитик, который разбивает два сложных юридических параграфа на минимальные смысловые единицы и проводит соответствия между ними.
 
 Твоя задача – сегментировать оба параграфа на соответствующие спаны, провести между ними соответствия и указать класс этого соответствия.
@@ -217,129 +223,22 @@ def run_llm_nli_file(
     temperature: float = 0.2,
     label_map: Dict[str, str] | None = None,
 ) -> Path:
+    """Synchronous wrapper that delegates to `run_llm_nli_file_async`.
+    Keeps the public API stable for the Gradio UI while enabling parallel LLM calls.
     """
-    Читает JSON: [{ "paragraph_1","paragraph_2", ... }, ...],
-    вызывает LLM и пишет NLI-контейнер:
-      {
-        "input_1": <paragraph_1>,
-        "input_2": <paragraph_2>,
-        "output_1": [{"input": span_1, "claim": span_1}, ...],
-        "output_2": [{"input": span_2, "claim": span_2}, ...],
-        "nli_results": [
-          {"premise_raw": s1, "hypothesis_raw": s2, "label": mapped, "confidence": null, "anchor": "..."},
-          ...
-        ],
-        "nli_model": "llm:<model_name>"
-      }
-    """
-    input_path = _as_path(input_path)
-
-    if not input_path.exists():
-        raise FileNotFoundError(f"Input file not found: {input_path}")
-
-    raw = input_path.read_text(encoding="utf-8")
-    if not raw.strip():
-        raise ValueError(f"Input JSON is empty: {input_path}")
-
-    try:
-        data = json.loads(raw)
-    except Exception as e:
-        raise ValueError(f"Cannot parse input JSON: {e}") from e
-
-    if not isinstance(data, list):
-        raise ValueError("Input must be a list of paragraph pairs.")
-    # optional: light schema check
-    if data and not isinstance(data[0], dict):
-        raise ValueError(
-            "Each element must be an object with 'paragraph_1'/'paragraph_2'."
+    return asyncio.run(
+        run_llm_nli_file_async(
+            input_path,
+            output_path=output_path,
+            system_prompt=system_prompt,
+            model_name=model_name,
+            temperature=temperature,
+            label_map=label_map,
+            max_concurrency=8,
         )
-
-    if output_path is None:
-        output_path = input_path.with_name(
-            f"{input_path.stem}_llm_nli{input_path.suffix}"
-        )
-    output_path = Path(output_path)
-
-    label_map = label_map or LABEL_MAP
-
-    data = json.loads(Path(input_path).read_text(encoding="utf-8"))
-    out: List[dict] = []
-    for rec in data:
-        p1 = str(rec.get("paragraph_1", "") or "")
-        p2 = str(rec.get("paragraph_2", "") or "")
-        if not p1 or not p2:
-            continue
-
-        try:
-            items = _llm_pairwise(
-                p1,
-                p2,
-                system_prompt=system_prompt,
-                model_name=model_name,
-                temperature=temperature,
-            )
-        except Exception as exc:
-            out.append(
-                {
-                    "input_1": p1,
-                    "input_2": p2,
-                    "output_1": [],
-                    "output_2": [],
-                    "nli_results": [],
-                    "nli_model": f"llm:{model_name}",
-                    "error": str(exc),
-                }
-            )
-            continue
-
-        spans1, spans2 = [], []
-        seen1, seen2 = set(), set()
-        nli_results: List[dict] = []
-        for it in items or []:
-            s1 = str(it.get("span_1", "") or "").strip()
-            s2 = str(it.get("span_2", "") or "").strip()
-            lab = str(it.get("label", "") or "").strip().lower()
-            mapped = label_map.get(lab, "neutral")
-            if s1 and s1 not in seen1:
-                spans1.append({"input": s1, "claim": s1})
-                seen1.add(s1)
-            if s2 and s2 not in seen2:
-                spans2.append({"input": s2, "claim": s2})
-                seen2.add(s2)
-            res = {
-                "premise": s1,
-                "hypothesis": s2,
-                "premise_raw": s1,
-                "hypothesis_raw": s2,
-                "label": mapped,
-                "confidence": None,
-                "reasoning": it.get("reasoning")
-                or it.get("explanation")
-                or it.get("reason"),
-            }
-            if it.get("anchor"):
-                res["anchor"] = str(it["anchor"])
-            nli_results.append(res)
-
-        out.append(
-            {
-                "input_1": p1,
-                "input_2": p2,
-                "output_1": spans1,
-                "output_2": spans2,
-                "nli_results": nli_results,
-                "nli_model": f"llm:{model_name}",
-            }
-        )
-
-    output_path.write_text(
-        json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    return output_path
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# UI
 def build_demo():
     with gr.Blocks(css=side_bar, fill_height=True, title="Pipeline (LLM)") as demo:
         gr.HTML(nav_tag, visible=True)
@@ -393,3 +292,141 @@ demo = build_demo()
 
 if __name__ == "__main__":
     demo.queue(concurrency_count=4).launch(show_error=True)
+
+
+async def _achat_completion(
+    system_prompt: str, user_prompt: str, *, model_name: str, temperature: float
+) -> str:
+    client, model_id = make_async_client(model_name)
+    # Tenacity async retry
+    async for attempt in AsyncRetrying(
+        wait=wait_random_exponential(multiplier=1, max=20),
+        stop=stop_after_attempt(6),
+        retry=retry_if_exception_type(openai.OpenAIError),
+    ):
+        with attempt:
+            resp = await client.chat.completions.create(
+                model=model_id,
+                temperature=temperature,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+            return resp.choices[0].message.content
+
+
+async def async_llm_pairwise(
+    p1: str, p2: str, *, system_prompt: str, model_name: str, temperature: float
+) -> list[dict]:
+    user_prompt = _build_user_prompt(p1, p2)
+    text = await _achat_completion(
+        system_prompt, user_prompt, model_name=model_name, temperature=temperature
+    )
+    return _postprocess_to_list(text)
+
+
+async def run_llm_nli_file_async(
+    input_path: str | Path,
+    *,
+    output_path: str | Path | None = None,
+    system_prompt: str = SYSTEM_PROMPT,
+    model_name: str = "gpt-4o-mini",
+    temperature: float = 0.2,
+    label_map: Dict[str, str] | None = None,
+    max_concurrency: int = 8,
+) -> Path:
+    input_path = _to_path(input_path)
+    raw = input_path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(raw)
+    except Exception as e:
+        raise ValueError(f"Cannot parse input JSON: {e}") from e
+    if not isinstance(data, list):
+        raise ValueError("Input must be a list of paragraph pairs.")
+    if data and not isinstance(data[0], dict):
+        raise ValueError(
+            "Each element must be an object with 'paragraph_1'/'paragraph_2'."
+        )
+
+    if output_path is None:
+        output_path = input_path.with_name(f"{input_path.stem}_llm_nli.json")
+    output_path = _to_path(output_path)
+
+    sem = asyncio.Semaphore(int(max(1, max_concurrency)))
+
+    async def worker(idx: int, p1: str, p2: str) -> Tuple[int, dict]:
+        try:
+            async with sem:
+                items = await async_llm_pairwise(
+                    p1,
+                    p2,
+                    system_prompt=system_prompt,
+                    model_name=model_name,
+                    temperature=temperature,
+                )
+            # Build record same as sync path
+            spans1, spans2 = [], []
+            seen1, seen2 = set(), set()
+            nli_results: List[dict] = []
+            for it in items or []:
+                s1 = str(it.get("span_1", "") or "").strip()
+                s2 = str(it.get("span_2", "") or "").strip()
+                lab = str(it.get("label", "") or "").strip().lower()
+                mapped = (label_map or {}).get(lab, None) or {
+                    "equivalent": "entailment",
+                    "contradiction": "contradiction",
+                    "addition": "neutral",
+                }.get(lab, "neutral")
+                if s1 and s1 not in seen1:
+                    spans1.append({"input": s1, "claim": s1})
+                    seen1.add(s1)
+                if s2 and s2 not in seen2:
+                    spans2.append({"input": s2, "claim": s2})
+                    seen2.add(s2)
+                res = {
+                    "premise": s1,
+                    "premise_raw": s1,
+                    "hypothesis": s2,
+                    "hypothesis_raw": s2,
+                    "label": mapped,
+                    "reasoning": it.get("reasoning") or "",
+                }
+                nli_results.append(res)
+            rec = {
+                "input_1": p1,
+                "input_2": p2,
+                "output_1": spans1,
+                "output_2": spans2,
+                "nli_results": nli_results,
+                "nli_model": f"llm:{model_name}",
+            }
+            return idx, rec
+        except Exception as exc:
+            return idx, {
+                "input_1": p1,
+                "input_2": p2,
+                "output_1": [],
+                "output_2": [],
+                "nli_results": [],
+                "nli_model": f"llm:{model_name}",
+                "error": str(exc),
+            }
+
+    tasks = []
+    for i, rec in enumerate(data):
+        p1 = str(rec.get("paragraph_1") or "")
+        p2 = str(rec.get("paragraph_2") or "")
+        tasks.append(asyncio.create_task(worker(i, p1, p2)))
+
+    results = await asyncio.gather(*tasks)
+    out = [None] * len(results)
+    for idx, rec in results:
+        out[idx] = rec
+    # Fallback if something weird happened
+    out = [r for r in out if r is not None]
+
+    output_path.write_text(
+        json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return output_path

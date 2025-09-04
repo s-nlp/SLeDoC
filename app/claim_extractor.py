@@ -1,21 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Dict, List, Tuple
 
 import openai
 from dotenv import load_dotenv
 from tenacity import (
+    AsyncRetrying,
     retry,
     retry_if_exception_type,
     stop_after_attempt,
     wait_random_exponential,
 )
-from tqdm import tqdm
 
-from app.openai_client import make_client
+from app.openai_client import make_async_client, make_client
 
 os.environ["TOKENIZERS_PARALLELISM"] = "True"
 load_dotenv()
@@ -48,9 +49,7 @@ DEFAULT_SYSTEM_PROMPT = """Ты — юридический аналитик, к�
 ]"""
 
 
-# ──────────────────────────────────────────────────────────────────────────────
 # Low-level OpenAI wrapper with basic exponential-back-off
-# ──────────────────────────────────────────────────────────────────────────────
 @retry(
     wait=wait_random_exponential(multiplier=1, max=20),
     stop=stop_after_attempt(6),
@@ -102,9 +101,7 @@ def _extract_for_paragraph(
     return _postprocess_to_list(raw)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
 # Public helper for a whole JSON file
-# ──────────────────────────────────────────────────────────────────────────────
 def run_claim_extraction(
     input_path: str | Path,
     output_path: str | Path | None = None,
@@ -113,47 +110,100 @@ def run_claim_extraction(
     model_name: str = "gpt-4o",
     temperature: float = 0.2,
 ) -> Path:
-    """Extract claims for every ``{"paragraph_1", "paragraph_2"}`` record in
-    *input_path* and write a sibling file suffixed with ``_claims``.
+    """Sync wrapper around `run_claim_extraction_async` enabling parallel LLM calls."""
+    return asyncio.run(
+        run_claim_extraction_async(
+            input_path,
+            output_path=output_path,
+            system_prompt=system_prompt,
+            model_name=model_name,
+            temperature=temperature,
+            max_concurrency=8,
+        )
+    )
 
-    The function **automatically** chooses the right API endpoint depending on
-    ``model_name`` (see top of this file).
-    """
 
+async def _achat_completion(
+    prompt: str, system_prompt: str, model_name: str, temperature: float
+) -> str:
+    client, model_id = make_async_client(model_name)
+    async for attempt in AsyncRetrying(
+        wait=wait_random_exponential(multiplier=1, max=20),
+        stop=stop_after_attempt(6),
+        retry=retry_if_exception_type(openai.OpenAIError),
+    ):
+        with attempt:
+            resp = await client.chat.completions.create(
+                model=model_id,
+                temperature=temperature,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            return resp.choices[0].message.content
+
+
+async def _extract_for_paragraph_async(
+    text: str, *, system_prompt: str, model_name: str, temperature: float
+) -> list[dict[str, str]]:
+    raw = await _achat_completion(text, system_prompt, model_name, temperature)
+    return _postprocess_to_list(raw)
+
+
+async def run_claim_extraction_async(
+    input_path: str | Path,
+    output_path: str | Path | None = None,
+    *,
+    system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+    model_name: str = "gpt-4o",
+    temperature: float = 0.2,
+    max_concurrency: int = 8,
+) -> Path:
     input_path = Path(input_path)
     if output_path is None:
-        output_path = input_path.with_name(
-            f"{input_path.stem}_claims{input_path.suffix}"
-        )
+        output_path = input_path.with_name(f"{input_path.stem}_claims.json")
     output_path = Path(output_path)
 
-    with input_path.open("r", encoding="utf-8") as f:
-        data: List[Dict[str, Any]] = json.load(f)
+    data = json.loads(input_path.read_text(encoding="utf-8"))
+    sem = asyncio.Semaphore(int(max(1, max_concurrency)))
 
-    for rec in tqdm(data, desc="Extracting claims", ncols=88):
+    async def worker(idx: int, rec: dict) -> Tuple[int, dict]:
         try:
-            rec["output_1"] = _extract_for_paragraph(
-                rec["paragraph_1"],
-                system_prompt=system_prompt,
-                model_name=model_name,
-                temperature=temperature,
-            )
-            rec["output_2"] = _extract_for_paragraph(
-                rec["paragraph_2"],
-                system_prompt=system_prompt,
-                model_name=model_name,
-                temperature=temperature,
-            )
-            # Whatever your similarity placeholder was ↓
+            async with sem:
+                t1 = _extract_for_paragraph_async(
+                    rec.get("paragraph_1", ""),
+                    system_prompt=system_prompt,
+                    model_name=model_name,
+                    temperature=temperature,
+                )
+                t2 = _extract_for_paragraph_async(
+                    rec.get("paragraph_2", ""),
+                    system_prompt=system_prompt,
+                    model_name=model_name,
+                    temperature=temperature,
+                )
+                out1, out2 = await asyncio.gather(t1, t2)
+            rec = dict(rec)
+            rec["output_1"] = out1
+            rec["output_2"] = out2
             rec["similarity"] = rec.get("similarity", 0.0)
+            return idx, rec
         except Exception as exc:
-            # Keep batch going – mark failures for later inspection
+            rec = dict(rec)
             rec["output_1"] = None
             rec["output_2"] = None
             rec["similarity"] = None
             rec["error"] = str(exc)
+            return idx, rec
 
-    with output_path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
+    tasks = [asyncio.create_task(worker(i, r)) for i, r in enumerate(data)]
+    results = await asyncio.gather(*tasks)
+    out = [None] * len(results)
+    for idx, r in results:
+        out[idx] = r
+    out = [r for r in out if r is not None]
+    output_path.write_text(
+        json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return output_path
