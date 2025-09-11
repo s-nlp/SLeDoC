@@ -61,7 +61,10 @@ EXTRA_CSS = (
 /* NLI colors — keep them faint */
 .hl.entailment     { background: rgba(34,197,94,.18); }   /* green */
 .hl.neutral        { background: rgba(59,130,246,.18); }  /* blue */
-.hl.contradiction  { background: rgba(244,63,94,.18); }   /* red */
+.hl.contradiction  { background: rgba(244,63,94,.18); }
+/* contradiction term highlight */
+.contra-term{ background: #fff59a; padding:0 2px; border-radius:3px; }
+   /* red */
 
 /* selected state: strong outline, keep original background color */
 .hl.selected { outline:2px solid #000 !important; }
@@ -113,6 +116,79 @@ EXTRA_CSS = (
 # ----------------------------- Helpers -----------------------------
 def _escape(s: str) -> str:
     return html.escape(s or "", quote=False).replace("\n", "<br>")
+
+
+RUS_STOPWORDS_SHORT = {
+    "на",
+    "о",
+    "по",
+    "об",
+    "от",
+    "до",
+    "из",
+    "за",
+    "у",
+
+}
+MIN_TERM_ALNUM_LEN = 2  # require ≥2 alnum chars to highlight
+
+
+def _alnum_len(s: str) -> int:
+    # count letters/digits/underscore in Unicode
+    return len(re.sub(r"[^\w]", "", s, flags=re.UNICODE))
+
+
+def _wrap_terms_html(text: str, terms: List[str]) -> str:
+    """
+    HTML-escape text and wrap selected terms/phrases in <mark class="contra-term">…</mark>.
+    - Ignores very short items and common 1–2 char function words.
+    - Matches only on token boundaries (no mid-word matches).
+    - Case-insensitive. Longer phrases take precedence.
+    """
+    if not text:
+        return ""
+    if not terms:
+        return _escape(text)
+
+    # normalize, de-dup, length filter, stopword filter
+    cleaned = []
+    seen = set()
+    for t in sorted((t or "").strip() for t in terms if t):
+        if not t:
+            continue
+        key = t.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if key in RUS_STOPWORDS_SHORT:
+            continue
+        if _alnum_len(t) < MIN_TERM_ALNUM_LEN:
+            continue
+        cleaned.append(t)
+
+    if not cleaned:
+        return _escape(text)
+
+    # Build boundary-safe alternation:
+    # (?<!\w)term(?!\w) ensures we highlight whole tokens/phrases only.
+    parts = [
+        rf"(?<!\w){re.escape(t)}(?!\w)" for t in sorted(cleaned, key=len, reverse=True)
+    ]
+    pattern = "(?:" + "|".join(parts) + ")"
+
+    try:
+        rx = re.compile(pattern, flags=re.IGNORECASE | re.UNICODE)
+    except Exception:
+        # On any regex build issue, just return escaped text
+        return _escape(text)
+
+    out, last = [], 0
+    for m in rx.finditer(text):
+        out.append(_escape(text[last : m.start()]))
+        out.append(f'<mark class="contra-term">{_escape(m.group(0))}</mark>')
+        last = m.end()
+    out.append(_escape(text[last:]))
+    return "".join(out)
 
 
 def _safe_get(p: Dict[str, Any], keys: List[str]) -> str:
@@ -248,6 +324,40 @@ def _get_contra_terms(
         result = _fallback_contra_terms(left, right)
     _CONTRA_CACHE[key] = result
     return result
+
+
+def _compute_contra_terms_for_focus(
+    pairs: List[Dict[str, Any]],
+    focus: Tuple[int, Optional[int]],
+    use_llm: bool,
+    model_id: str,
+):
+    """Return (terms_dict, right_idx) or (None, None) if not available."""
+    if not pairs:
+        return None, None
+    k, i_left = focus
+    if i_left is None or k is None or k >= len(pairs):
+        return None, None
+    b = pairs[k]
+    out1 = b.get("output_1") or []
+    out2 = b.get("output_2") or []
+    if not (0 <= i_left < len(out1)):
+        return None, None
+    links, _ = _link_map_for_pair(b)
+    cands = [
+        (rj, lbl)
+        for (rj, lbl) in links.get(i_left, [])
+        if str(lbl).lower() == "contradiction"
+    ]
+    if not cands:
+        return None, None
+    rj, _ = cands[0]
+    left = str(out1[i_left].get("claim") or out1[i_left].get("input") or "")
+    right = str(out2[rj].get("claim") or out2[rj].get("input") or "")
+    terms = _get_contra_terms(
+        left, right, use_llm=use_llm, model_id=model_id or "gpt-4o-mini"
+    )
+    return {"terms": terms, "right_idx": rj}
 
 
 def _render_contra_box_html(terms: Dict[str, List[str]], left: str, right: str) -> str:
@@ -409,7 +519,11 @@ _BRIDGE_JS = r"""
 """
 
 
-def _render_left(blocks: List[Dict[str, Any]]) -> str:
+def _render_left(
+    blocks: List[Dict[str, Any]],
+    focus: Optional[Tuple[int, Optional[int]]] = None,
+    contra_terms: Optional[Dict[str, List[str]]] = None,
+) -> str:
     """
     Big left pane: for each pair, show Document A claims as spans, colored by worst NLI link.
     If no claims available for a block, fall back to raw paragraph text.
@@ -422,7 +536,11 @@ def _render_left(blocks: List[Dict[str, Any]]) -> str:
         if out1:
             spans = []
             for i1, c in enumerate(out1):
-                txt = _escape(c.get("claim") or c.get("input") or "")
+                raw = str(c.get("claim") or c.get("input") or "")
+                if focus and focus[0] == pi and focus[1] == i1 and contra_terms:
+                    txt = _wrap_terms_html(raw, contra_terms.get("from_span_1") or [])
+                else:
+                    txt = _escape(raw)
                 cls = "hl " + (left_color.get(i1, "") or "")
                 spans.append(
                     f'<span class="{cls}" data-pair="{pi}" data-left="{i1}">{txt}</span>'
@@ -446,7 +564,10 @@ def _render_left(blocks: List[Dict[str, Any]]) -> str:
 
 
 def _render_right(
-    blocks: List[Dict[str, Any]], focus: Tuple[int, Optional[int]]
+    blocks: List[Dict[str, Any]],
+    focus: Tuple[int, Optional[int]],
+    contra_terms: Optional[Dict[str, List[str]]] = None,
+    target_right_idx: Optional[int] = None,
 ) -> str:
     """
     Small right pane:
@@ -501,7 +622,18 @@ def _render_right(
         spans = []
         for j in show_indices:
             c = out2[j]
-            txt = _escape(c.get("claim") or c.get("input") or "")
+            raw = str(c.get("claim") or c.get("input") or "")
+            if (
+                i_left is not None
+                and target_right_idx is not None
+                and j == target_right_idx
+                and (contra_terms or {}).get("from_span_2")
+            ):
+                txt = _wrap_terms_html(
+                    raw, (contra_terms or {}).get("from_span_2") or []
+                )
+            else:
+                txt = _escape(raw)
             cls = "hl " + (label_for_right.get(j, "") or "")
             # add anchor icon + tooltip for addition/neutral
             anchor_sup = ""
@@ -676,42 +808,61 @@ def _orchestrate(
     return align_path, pairs_path, _preview, left_html, right_html, pairs
 
 
-def _bridge_update(pairs: List[Dict[str, Any]], bridge_value: str) -> str:
-    """
-    bridge_value is:
-      'P:<pair_idx>'               – paragraph selected
-      'S:<pair_idx>:<left_claim>'  – specific left claim selected
-    """
-    try:
-        if not bridge_value:
-            return _render_right(pairs, (0, None))
-        if bridge_value.startswith("P:"):
-            k = int(bridge_value.split(":", 1)[1])
-            return _render_right(pairs, (k, None))
-        if bridge_value.startswith("S:"):
-            _t, a, b = bridge_value.split(":")
-            return _render_right(pairs, (int(a), int(b)))
-    except Exception:
-        pass
-    return _render_right(pairs, (0, None))
-
-
 def _on_pick(pairs, choice):
     if not pairs:
         return (
+            _render_left(
+                [],
+            ),
             _render_right([], (0, None)),
             _render_reason([], (0, None)),
-            _EMPTY_CONTRA,
         )
     try:
         idx = max(0, int(str(choice)) - 1) if choice else 0
     except Exception:
         idx = 0
-    # reason for paragraph pick (no specific left span) is empty by design
     return (
+        _render_left(pairs),
         _render_right(pairs, (idx, None)),
         _render_reason(pairs, (idx, None)),
-        _EMPTY_CONTRA,
+    )
+
+
+def _bridge_update(pairs: List[Dict[str, Any]], bridge_value: str):
+    """Lightweight update (no LLM/diff). Just sync selection and clear highlights."""
+    try:
+        if not bridge_value:
+            k = 0
+            return (
+                _render_left(pairs),
+                _render_right(pairs, (0, None)),
+                _render_reason(pairs, (0, None)),
+                gr.update(value="1"),
+            )
+        if bridge_value.startswith("P:"):
+            k = int(bridge_value.split(":", 1)[1])
+            return (
+                _render_left(pairs),
+                _render_right(pairs, (k, None)),
+                _render_reason(pairs, (k, None)),
+                gr.update(value=str(k + 1)),
+            )
+        if bridge_value.startswith("S:"):
+            _t, a, b = bridge_value.split(":")
+            k, i_left = int(a), int(b)
+            return (
+                _render_left(pairs),
+                _render_right(pairs, (k, i_left)),
+                _render_reason(pairs, (k, i_left)),
+                gr.update(value=str(k + 1)),
+            )
+    except Exception:
+        pass
+    return (
+        _render_left(pairs),
+        _render_right(pairs, (0, None)),
+        _render_reason(pairs, (0, None)),
+        gr.update(value="1"),
     )
 
 
@@ -721,30 +872,39 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o-mini"):
         if v and v.startswith("P:"):
             k = int(v.split(":", 1)[1])
             return (
+                _render_left(ps or []),
                 _render_right(ps or [], (k, None)),
                 _render_reason(ps or [], (k, None)),
                 gr.update(value=str(k + 1)),
-                _EMPTY_CONTRA,
             )
         if v and v.startswith("S:"):
             _t, a, b = v.split(":")
             k, l = int(a), int(b)
-            contra_html = _render_contradiction_box(
+            info = _compute_contra_terms_for_focus(
                 ps or [], (k, l), bool(use_llm_contra), contra_model_id or "gpt-4o-mini"
             )
+            if not info:
+                return (
+                    _render_left(ps or []),
+                    _render_right(ps or [], (k, l)),
+                    _render_reason(ps or [], (k, l)),
+                    gr.update(value=str(k + 1)),
+                )
+            terms = info["terms"]
+            rj = info["right_idx"]
             return (
-                _render_right(ps or [], (k, l)),
+                _render_left(ps or [], (k, l), terms),
+                _render_right(ps or [], (k, l), terms, rj),
                 _render_reason(ps or [], (k, l)),
                 gr.update(value=str(k + 1)),
-                contra_html,
             )
     except Exception:
         pass
     return (
-        _render_right(ps or [], (k, None)),
-        _render_reason(ps or [], (k, None)),
+        _render_left(ps or []),
+        _render_right(ps or [], (k, l)),
+        _render_reason(ps or [], (k, l)),
         gr.update(value=str(k + 1)),
-        _EMPTY_CONTRA,
     )
 
 
@@ -815,15 +975,11 @@ with gr.Blocks(
                     )
                 with gr.Row():
                     use_llm_contra = gr.Checkbox(
-                        value=True, label="Use LLM for contradiction box"
+                        value=True, label="Use LLM to extract contradicting terms"
                     )
                     contra_model = gr.Textbox(
-                        value="gpt-4o-mini", label="Model", scale=2
+                        value="gpt-4o-mini", label="Model for term extraction", scale=2
                     )
-
-                contra_box = gr.HTML(
-                    value='<div class="contra-box"><em>Select a span to analyze.</em></div>'
-                )
 
             pair_picker = gr.Radio(
                 choices=[],
@@ -912,7 +1068,6 @@ with gr.Blocks(
                     left,  # left_html
                     right,  # right_html
                     reason,  # reason_html
-                    _EMPTY_CONTRA,  # contra_box (initially ask to select a span)
                     pairs,  # pairs_state
                     align_path,  # align_path_state
                     pairs_path,  # pairs_path_state
@@ -941,7 +1096,6 @@ with gr.Blocks(
                     left_html,
                     right_html,
                     reason_html,
-                    contra_box,
                     pairs_state,
                     align_path_state,
                     pairs_path_state,
@@ -959,19 +1113,19 @@ with gr.Blocks(
             pair_picker.change(
                 _on_pick,
                 inputs=[pairs_state, pair_picker],
-                outputs=[right_html, reason_html, contra_box],
+                outputs=[left_html, right_html, reason_html],
             )
             # connect bridge
             bridge_click.change(
-                _bridge_combo,
+                _bridge_update,
                 inputs=[pairs_state, bridge_click],
-                outputs=[right_html, reason_html, pair_picker],
+                outputs=[left_html, right_html, reason_html, pair_picker],
             )
             # react to `input` events (what JS emits)
             bridge_click.input(
                 _bridge_combo,
                 inputs=[pairs_state, bridge_click, use_llm_contra, contra_model],
-                outputs=[right_html, reason_html, pair_picker, contra_box],
+                outputs=[left_html, right_html, reason_html, pair_picker],
             )
 
 # Fast launch guard
