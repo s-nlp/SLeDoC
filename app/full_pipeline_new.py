@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import difflib
+import hashlib
 import html
 import json
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -24,6 +28,7 @@ from app.claim_extractor import DEFAULT_SYSTEM_PROMPT, run_claim_extraction
 
 # Stage 2
 from app.nli_predict import _list_models, run_nli_file
+from app.openai_client import make_client
 
 # Stage 1+2 via LLM
 from app.pipeline_llm import SYSTEM_PROMPT as LLM_NLI_SYSTEM_PROMPT
@@ -92,6 +97,15 @@ EXTRA_CSS = (
 /* reasoning panel */
 .reason-wrap{ margin-top:8px; display:flex; flex-direction:column; gap:8px; }
 .reason-card{ border:1px dashed #cbd5e1; background:#fff; padding:8px 10px; border-radius:10px; font-size:14px; }
+
+.contra-box{margin-top:10px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fafafa}
+.contra-head{font-weight:600;margin-bottom:6px}
+.contra-row{display:flex;gap:8px;align-items:flex-start;margin:4px 0}
+.side-tag{font-size:12px;color:#6b7280;padding:2px 6px;border:1px solid #e5e7eb;border-radius:9999px}
+.side-pills{display:flex;gap:6px;flex-wrap:wrap}
+.pill{display:inline-block;padding:2px 8px;border:1px solid #d1d5db;border-radius:9999px;background:white;font-size:12px}
+.contra-src{margin-top:8px;font-size:12px;color:#6b7280;display:grid;gap:2px}
+.src-tag{font-weight:600;color:#4b5563}
 """
 )
 
@@ -141,6 +155,158 @@ def _index_claims(claims: List[Dict[str, Any]]) -> Dict[str, int]:
         if s:
             idx[s] = i
     return idx
+
+
+# cache to avoid repeat calls for same (left,right)
+_CONTRA_CACHE: Dict[str, Dict[str, List[str]]] = {}
+
+
+def _hash_pair(a: str, b: str) -> str:
+    return hashlib.sha1((a + "␞" + b).encode("utf-8")).hexdigest()
+
+
+def _fallback_contra_terms(left: str, right: str) -> Dict[str, List[str]]:
+    # token diff fallback (deterministic, fast)
+    WORD = re.compile(
+        r"[A-Za-zА-Яа-яЁёІіЇїҐґ0-9]+|[^\sA-Za-zА-Яа-яЁёІіЇїҐґ0-9]", re.UNICODE
+    )
+    lt = WORD.findall(left or "")
+    rt = WORD.findall(right or "")
+    sm = difflib.SequenceMatcher(a=lt, b=rt)
+    bad_l, bad_r = [], []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag != "equal":
+            bad_l += [t for t in lt[i1:i2] if re.search(r"\w", t)]
+            bad_r += [t for t in rt[j1:j2] if re.search(r"\w", t)]
+
+    # keep unique while preserving order
+    def uniq(xs):
+        seen = set()
+        out = []
+        for x in xs:
+            if x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+
+    return {"from_span_1": uniq(bad_l), "from_span_2": uniq(bad_r)}
+
+
+async def _llm_contra_terms_async(
+    left: str, right: str, model_id: str
+) -> Dict[str, List[str]]:
+    """
+    Ask LLM for the exact contradicting words/short phrases.
+    Returns {"from_span_1":[...], "from_span_2":[...]}.
+    Falls back to token diff on error.
+    """
+    try:
+        client, mid = make_client(model_id)
+        prompt = (
+            "Here are two spans of Russian text that contradict each other.\n"
+            "Your task: extract SHORT words/phrases (1–4 words) that constitute the contradiction.\n"
+            "Return JSON ONLY in this form:\n"
+            '{"from_span_1": ["..."], "from_span_2": ["..."]}\n'
+            "Do not add any commentary.\n\n"
+            f"span_1: {left}\n"
+            f"span_2: {right}\n"
+        )
+        resp = await client.chat.completions.create(
+            model=mid,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(resp.choices[0].message.content)
+        # basic hygiene
+        a = [str(x).strip() for x in data.get("from_span_1", []) if str(x).strip()]
+        b = [str(x).strip() for x in data.get("from_span_2", []) if str(x).strip()]
+        if not a and not b:
+            raise ValueError("empty LLM result")
+        return {"from_span_1": a, "from_span_2": b}
+    except Exception:
+        return _fallback_contra_terms(left, right)
+
+
+def _get_contra_terms(
+    left: str, right: str, use_llm: bool, model_id: str
+) -> Dict[str, List[str]]:
+    key = _hash_pair(left, right) + ("#llm" if use_llm else "#diff")
+    if key in _CONTRA_CACHE:
+        return _CONTRA_CACHE[key]
+    if use_llm:
+        # run sync-friendly
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            result = loop.run_until_complete(_llm_contra_terms_async(left, right, model_id))  # type: ignore
+        else:
+            result = asyncio.run(_llm_contra_terms_async(left, right, model_id))
+    else:
+        result = _fallback_contra_terms(left, right)
+    _CONTRA_CACHE[key] = result
+    return result
+
+
+def _render_contra_box_html(terms: Dict[str, List[str]], left: str, right: str) -> str:
+    def pills(items: List[str]) -> str:
+        if not items:
+            return '<span class="pill">—</span>'
+        return " ".join(f'<span class="pill">{_escape(x)}</span>' for x in items)
+
+    return (
+        '<div class="contra-box">'
+        '<div class="contra-head">🔎 Contradiction focus</div>'
+        '<div class="contra-row"><div class="side-tag">span_1</div>'
+        f'<div class="side-pills">{pills(terms.get("from_span_1", []))}</div></div>'
+        '<div class="contra-row"><div class="side-tag">span_2</div>'
+        f'<div class="side-pills">{pills(terms.get("from_span_2", []))}</div></div>'
+        '<div class="contra-src">'
+        f'<div><span class="src-tag">span_1:</span> {_escape(left)}</div>'
+        f'<div><span class="src-tag">span_2:</span> {_escape(right)}</div>'
+        "</div>"
+        "</div>"
+    )
+
+
+_EMPTY_CONTRA = '<div class="contra-box"><em>Select a span to analyze.</em></div>'
+
+
+def _render_contradiction_box(
+    pairs: list, focus: tuple, use_llm: bool, model_id: str
+) -> str:
+    # focus is (pair_idx, i_left) in your current bridge
+    if not pairs:
+        return '<div class="contra-box"><em>Load a pair to analyze.</em></div>'
+    k, i_left = focus
+    if i_left is None or k is None or k >= len(pairs):
+        return '<div class="contra-box"><em>Select a span to analyze.</em></div>'
+
+    b = pairs[k]
+    out1 = b.get("output_1") or []
+    out2 = b.get("output_2") or []
+    if not (0 <= i_left < len(out1)):
+        return '<div class="contra-box"><em>Select a span to analyze.</em></div>'
+
+    links, _ = _link_map_for_pair(b)
+    cands = [
+        (rj, lbl)
+        for (rj, lbl) in links.get(i_left, [])
+        if str(lbl).lower() == "contradiction"
+    ]
+    if not cands:
+        return '<div class="contra-box"><em>No contradiction for this span.</em></div>'
+
+    rj, _ = cands[0]
+    left = str(out1[i_left].get("claim") or out1[i_left].get("input") or "")
+    right = str(out2[rj].get("claim") or out2[rj].get("input") or "")
+
+    terms = _get_contra_terms(
+        left, right, use_llm=use_llm, model_id=model_id or "gpt-4o-mini"
+    )
+    return _render_contra_box_html(terms, left, right)
 
 
 def _link_map_for_pair(
@@ -532,16 +698,24 @@ def _bridge_update(pairs: List[Dict[str, Any]], bridge_value: str) -> str:
 
 def _on_pick(pairs, choice):
     if not pairs:
-        return _render_right([], (0, None)), _render_reason([], (0, None))
+        return (
+            _render_right([], (0, None)),
+            _render_reason([], (0, None)),
+            _EMPTY_CONTRA,
+        )
     try:
         idx = max(0, int(str(choice)) - 1) if choice else 0
     except Exception:
         idx = 0
     # reason for paragraph pick (no specific left span) is empty by design
-    return _render_right(pairs, (idx, None)), _render_reason(pairs, (idx, None))
+    return (
+        _render_right(pairs, (idx, None)),
+        _render_reason(pairs, (idx, None)),
+        _EMPTY_CONTRA,
+    )
 
 
-def _bridge_combo(ps, v):
+def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o-mini"):
     k, l = 0, None
     try:
         if v and v.startswith("P:"):
@@ -550,14 +724,19 @@ def _bridge_combo(ps, v):
                 _render_right(ps or [], (k, None)),
                 _render_reason(ps or [], (k, None)),
                 gr.update(value=str(k + 1)),
+                _EMPTY_CONTRA,
             )
         if v and v.startswith("S:"):
             _t, a, b = v.split(":")
             k, l = int(a), int(b)
+            contra_html = _render_contradiction_box(
+                ps or [], (k, l), bool(use_llm_contra), contra_model_id or "gpt-4o-mini"
+            )
             return (
                 _render_right(ps or [], (k, l)),
                 _render_reason(ps or [], (k, l)),
                 gr.update(value=str(k + 1)),
+                contra_html,
             )
     except Exception:
         pass
@@ -565,6 +744,7 @@ def _bridge_combo(ps, v):
         _render_right(ps or [], (k, None)),
         _render_reason(ps or [], (k, None)),
         gr.update(value=str(k + 1)),
+        _EMPTY_CONTRA,
     )
 
 
@@ -633,6 +813,18 @@ with gr.Blocks(
                     reason_html = gr.HTML(
                         label="Reasoning", value="", elem_id="reason_box"
                     )
+                with gr.Row():
+                    use_llm_contra = gr.Checkbox(
+                        value=True, label="Use LLM for contradiction box"
+                    )
+                    contra_model = gr.Textbox(
+                        value="gpt-4o-mini", label="Model", scale=2
+                    )
+
+                contra_box = gr.HTML(
+                    value='<div class="contra-box"><em>Select a span to analyze.</em></div>'
+                )
+
             pair_picker = gr.Radio(
                 choices=[],
                 value=None,
@@ -720,6 +912,7 @@ with gr.Blocks(
                     left,  # left_html
                     right,  # right_html
                     reason,  # reason_html
+                    _EMPTY_CONTRA,  # contra_box (initially ask to select a span)
                     pairs,  # pairs_state
                     align_path,  # align_path_state
                     pairs_path,  # pairs_path_state
@@ -748,6 +941,7 @@ with gr.Blocks(
                     left_html,
                     right_html,
                     reason_html,
+                    contra_box,
                     pairs_state,
                     align_path_state,
                     pairs_path_state,
@@ -765,7 +959,7 @@ with gr.Blocks(
             pair_picker.change(
                 _on_pick,
                 inputs=[pairs_state, pair_picker],
-                outputs=[right_html, reason_html],
+                outputs=[right_html, reason_html, contra_box],
             )
             # connect bridge
             bridge_click.change(
@@ -776,8 +970,8 @@ with gr.Blocks(
             # react to `input` events (what JS emits)
             bridge_click.input(
                 _bridge_combo,
-                inputs=[pairs_state, bridge_click],
-                outputs=[right_html, reason_html, pair_picker],
+                inputs=[pairs_state, bridge_click, use_llm_contra, contra_model],
+                outputs=[right_html, reason_html, pair_picker, contra_box],
             )
 
 # Fast launch guard
