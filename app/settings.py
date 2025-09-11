@@ -83,7 +83,7 @@ EXTRA_CSS = """
 .hl:hover::after,.hl:focus::after{ content:none; display:none; }
 """
 
-# скрипт курсора + показывает скор уверенности
+# скрипт курсора + показывает скор уверенности + правое окно
 CUSTOM_JS = """
 () => {
   const confBox = () => document.getElementById('conf_box');
@@ -91,10 +91,7 @@ CUSTOM_JS = """
   const hi = (id, col) => {
     const e = document.getElementById(id);
     if (!e) return;
-    if (e.classList.contains('selected')) {
-      // don't override selected color on hover
-      return;
-    }
+    if (e.classList.contains('selected')) return; // keep selected color
     if (!('_bg' in e.dataset)) e.dataset._bg = e.style.backgroundColor || '';
     e.style.backgroundColor = col || e.style.backgroundColor;
     e.style.outline = '2px solid #000';
@@ -103,10 +100,7 @@ CUSTOM_JS = """
   const bye = (id) => {
     const e = document.getElementById(id);
     if (!e) return;
-    if (e.classList.contains('selected')) {
-      // keep selected color on mouseout
-      return;
-    }
+    if (e.classList.contains('selected')) return; // keep selected color
     const bg = ('_bg' in e.dataset) ? e.dataset._bg : '';
     e.style.backgroundColor = bg || '';
     e.style.outline = '';
@@ -116,7 +110,6 @@ CUSTOM_JS = """
     document.querySelectorAll('span.hl.selected, span.hl.dimmed')
       .forEach(el => { el.classList.remove('selected','dimmed'); });
     document.querySelectorAll('span.hl').forEach(el => {
-      // restore any styles
       const bg = ('_bg' in el.dataset) ? el.dataset._bg : '';
       el.style.backgroundColor = bg || '';
       el.style.outline = '';
@@ -179,6 +172,7 @@ CUSTOM_JS = """
     document.querySelectorAll('span.hl:not(.selected)')
       .forEach(el => el.classList.add('dimmed'));
   });
+
   // ---- Bridge clicks from left viewer to hidden Gradio Textbox (#bridge_click) ----
   const findBridgeBox = () =>
     document.querySelector('#bridge_click textarea') ||
@@ -197,7 +191,7 @@ CUSTOM_JS = """
       const lidx = span.getAttribute('data-left');
       const box = findBridgeBox();
       if (box) {
-        box.value = `S:${pidx}:${lidx}`;
+        box.value = "S:" + pidx + ":" + lidx;
         box.dispatchEvent(new Event('input',  { bubbles: true }));
         box.dispatchEvent(new Event('change', { bubbles: true }));
       }
@@ -210,11 +204,61 @@ CUSTOM_JS = """
       const idx = para.getAttribute('data-idx');
       const box = findBridgeBox();
       if (box) {
-        box.value = `P:${idx}`;
+        box.value = "P:" + idx;
         box.dispatchEvent(new Event('input',  { bubbles: true }));
         box.dispatchEvent(new Event('change', { bubbles: true }));
       }
+      // Schedule alignment to the same row after Gradio re-renders
+      setTimeout(function(){ scheduleAlign(idx); }, 60);
     }
   }, true);
+
+  // ===================== ROW ALIGNMENT (merged safely) ======================
+  function alignPair(idx){
+    var L = document.querySelector('#left_pane .para-box[data-idx="' + idx + '"]');
+    var R = document.querySelector('#right_pane .mirror-box[data-idx="' + idx + '"]');
+    if (!L || !R) return false;
+    var h = Math.ceil(L.getBoundingClientRect().height);
+    if (h > 0) R.style.minHeight = h + 'px';
+    try { L.scrollIntoView({block:'start', behavior:'smooth'}); } catch(_) {}
+    try { R.scrollIntoView({block:'start', behavior:'smooth'}); } catch(_) {}
+    return true;
+  }
+
+  function alignAll(){
+    var left = document.querySelectorAll('#left_pane .para-box[data-idx]');
+    if (!left.length) return;
+    for (var i=0; i<left.length; i++){
+      var lb = left[i];
+      var idx = lb.getAttribute('data-idx');
+      var rb = document.querySelector('#right_pane .mirror-box[data-idx="' + idx + '"]');
+      if (!rb) continue;
+      var h = Math.ceil(lb.getBoundingClientRect().height);
+      rb.style.minHeight = h > 0 ? (h + 'px') : '';
+    }
+  }
+
+  function scheduleAlign(idx){
+    // Try a few times to wait for Gradio DOM updates
+    var attempts = 0;
+    function tick(){
+      attempts++;
+      var ok = (idx != null) ? alignPair(idx) : (alignAll(), true);
+      if (attempts < 8 && !ok){
+        setTimeout(tick, 80);
+      } else if (attempts < 8) {
+        // one more pass after content settles
+        setTimeout(function(){ (idx != null) ? alignPair(idx) : alignAll(); }, 120);
+      }
+    }
+    setTimeout(tick, 80);
+  }
+
+  window.addEventListener('load', function(){
+    setTimeout(function(){ scheduleAlign(null); }, 250);
+  });
+  window.addEventListener('resize', function(){
+    scheduleAlign(null);
+  });
 }
 """

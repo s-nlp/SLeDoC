@@ -95,7 +95,7 @@ EXTRA_CSS = (
 .mirror-box{ min-height: unset; }
 
 /* right pane: flows with page scroll (no inner scroll, no sticky) */
-#right_pane{ position: static; }
+#right_pane { position: static; max-height: unset; overflow: visible; }
 
 /* reasoning panel */
 .reason-wrap{ margin-top:8px; display:flex; flex-direction:column; gap:8px; }
@@ -591,6 +591,91 @@ REASON_BY_LABEL = {
 }
 
 
+def _render_right_col(
+    blocks: List[Dict[str, Any]],
+    focus: Tuple[int, Optional[int]],
+    contra_terms: Optional[Dict[str, List[str]]] = None,
+    target_right_idx: Optional[int] = None,
+) -> str:
+    """
+    Render the entire right column with one .mirror-box per pair, so that we can
+    equalize heights and align vertically with the left column. Only the *focused*
+    pair shows full claims; the rest are lightweight placeholders.
+    """
+    k, i_left = focus
+    html = []
+    for idx, b in enumerate(blocks):
+        hdr = f"Document B — {'matching claims' if i_left is None and idx == k else ('linked to selected claim' if idx == k and i_left is not None else 'matching claims')} (pair {idx+1})"
+        if idx == k:
+            out2 = b.get("output_2") or []
+            links, _left_color = _link_map_for_pair(b)
+            label_for_right: Dict[int, str] = {}
+            severity = {"contradiction": 3, "neutral": 2, "entailment": 1}
+            if i_left is None:
+                for li, pairs in links.items():
+                    for rj, lbl in pairs:
+                        if severity.get(lbl, 0) > severity.get(
+                            label_for_right.get(rj, ""), 0
+                        ):
+                            label_for_right[rj] = lbl
+            else:
+                for rj, lbl in links.get(i_left, []):
+                    if severity.get(lbl, 0) > severity.get(
+                        label_for_right.get(rj, ""), 0
+                    ):
+                        label_for_right[rj] = lbl
+
+            anchor_for_right = {}
+            if i_left is not None:
+                for rj, lbl in links.get(i_left, []):
+                    if lbl == "entailment":
+                        for li, pairs in links.items():
+                            for rr, _ in pairs:
+                                if rr == rj and li != i_left:
+                                    raw_anchor = (b.get("output_1") or [])[li]
+                                    anchor_for_right[rj] = str(
+                                        raw_anchor.get("claim")
+                                        or raw_anchor.get("input")
+                                        or ""
+                                    )
+                                    break
+            if out2:
+                spans = []
+                for j, c in enumerate(out2):
+                    raw = str(c.get("claim") or c.get("input") or "")
+                    if (
+                        idx == k
+                        and target_right_idx is not None
+                        and j == int(target_right_idx)
+                        and contra_terms
+                    ):
+                        txt = _wrap_terms_html(raw, contra_terms.get("to_span_2") or [])
+                    else:
+                        txt = _escape(raw)
+                    cls = "hl " + (label_for_right.get(j, "") or "")
+                    anchor_sup = ""
+                    if j in anchor_for_right:
+                        anchor_sup = f' <sup class="anch" title="anchor: {_escape(anchor_for_right[j])}">🔗</sup>'
+                    spans.append(
+                        f'<span id="R-{idx}-{j}" class="{cls}" data-pair="{idx}" data-right="{j}">{txt}</span>{anchor_sup}'
+                    )
+                body = "<br>".join(spans)
+            else:
+                body = _escape(_text_right(b))
+        else:
+            body = '<div class="right-placeholder">—</div>'
+
+        html.append(
+            f"""
+          <div class="mirror-box" data-idx="{idx}" id="right-pair-{idx}">
+            <div class="para-head">{hdr}</div>
+            <div>{body}</div>
+          </div>
+        """
+        )
+    return "\n".join(html)
+
+
 def _render_reason(blocks, focus):
     k, i_left = focus
     if not blocks or k < 0 or k >= len(blocks) or i_left is None:
@@ -731,7 +816,7 @@ def _orchestrate(
         pairs = json.loads(Path(pairs_path).read_text(encoding="utf-8"))
 
     left_html = _render_left(pairs)
-    right_html = _render_right(pairs, (0, None))
+    right_html = _render_right_col(pairs, (0, None))
 
     return align_path, pairs_path, _preview, left_html, right_html, pairs
 
@@ -742,7 +827,7 @@ def _on_pick(pairs, choice):
             _render_left(
                 [],
             ),
-            _render_right([], (0, None)),
+            _render_right_col([], (0, None)),
             _render_reason([], (0, None)),
         )
     try:
@@ -751,7 +836,7 @@ def _on_pick(pairs, choice):
         idx = 0
     return (
         _render_left(pairs),
-        _render_right(pairs, (idx, None)),
+        _render_right_col(pairs, (idx, None)),
         _render_reason(pairs, (idx, None)),
     )
 
@@ -763,7 +848,7 @@ def _bridge_update(pairs: List[Dict[str, Any]], bridge_value: str):
             k = 0
             return (
                 _render_left(pairs),
-                _render_right(pairs, (0, None)),
+                _render_right_col(pairs, (0, None)),
                 _render_reason(pairs, (0, None)),
                 gr.update(value="1"),
             )
@@ -771,7 +856,7 @@ def _bridge_update(pairs: List[Dict[str, Any]], bridge_value: str):
             k = int(bridge_value.split(":", 1)[1])
             return (
                 _render_left(pairs),
-                _render_right(pairs, (k, None)),
+                _render_right_col(pairs, (k, None)),
                 _render_reason(pairs, (k, None)),
                 gr.update(value=str(k + 1)),
             )
@@ -780,7 +865,7 @@ def _bridge_update(pairs: List[Dict[str, Any]], bridge_value: str):
             k, i_left = int(a), int(b)
             return (
                 _render_left(pairs),
-                _render_right(pairs, (k, i_left)),
+                _render_right_col(pairs, (k, i_left)),
                 _render_reason(pairs, (k, i_left)),
                 gr.update(value=str(k + 1)),
             )
@@ -788,7 +873,7 @@ def _bridge_update(pairs: List[Dict[str, Any]], bridge_value: str):
         pass
     return (
         _render_left(pairs),
-        _render_right(pairs, (0, None)),
+        _render_right_col(pairs, (0, None)),
         _render_reason(pairs, (0, None)),
         gr.update(value="1"),
     )
@@ -801,7 +886,7 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o-mini"):
             k = int(v.split(":", 1)[1])
             return (
                 _render_left(ps or []),
-                _render_right(ps or [], (k, None)),
+                _render_right_col(ps or [], (k, None)),
                 _render_reason(ps or [], (k, None)),
                 gr.update(value=str(k + 1)),
             )
@@ -814,7 +899,7 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o-mini"):
             if not info:
                 return (
                     _render_left(ps or []),
-                    _render_right(ps or [], (k, l)),
+                    _render_right_col(ps or [], (k, l)),
                     _render_reason(ps or [], (k, l)),
                     gr.update(value=str(k + 1)),
                 )
@@ -822,7 +907,7 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o-mini"):
             rj = info["right_idx"]
             return (
                 _render_left(ps or [], (k, l), terms),
-                _render_right(ps or [], (k, l), terms, rj),
+                _render_right_col(ps or [], (k, l), terms, rj),
                 _render_reason(ps or [], (k, l)),
                 gr.update(value=str(k + 1)),
             )
@@ -830,7 +915,7 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o-mini"):
         pass
     return (
         _render_left(ps or []),
-        _render_right(ps or [], (k, l)),
+        _render_right_col(ps or [], (k, l)),
         _render_reason(ps or [], (k, l)),
         gr.update(value=str(k + 1)),
     )
