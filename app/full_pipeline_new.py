@@ -95,7 +95,13 @@ EXTRA_CSS = (
 .mirror-box{ min-height: unset; }
 
 /* right pane: flows with page scroll (no inner scroll, no sticky) */
-#right_pane{ position: static; }
+#right_pane{
+  position: static;
+  max-height: calc(100vh - 220px); /* tweak if your header is taller/shorter */
+  overflow: auto;
+  scroll-behavior: smooth;
+}
+#right_pane .pair-box{ scroll-margin-top: 8px; } /* small gap when snapping to top */
 
 /* reasoning panel */
 .reason-wrap{ margin-top:8px; display:flex; flex-direction:column; gap:8px; }
@@ -113,6 +119,39 @@ EXTRA_CSS = (
 )
 
 
+_SYNC_SCROLL_JS = r"""
+(() => {
+  function scrollRightTo(pi){
+    const el = document.querySelector(`#right_pane #right-pair-${pi}`);
+    if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+  function bind(){
+    const pair = document.querySelector('#pair_picker input, #pair_picker select, #pair_picker');
+    if (pair && !pair.__syncBound){
+      pair.__syncBound = true;
+      pair.addEventListener('change', (e)=>{
+        const v = (e.target && e.target.value) || pair.value || "";
+        const idx = Math.max(0, parseInt(v, 10) - 1);
+        if (!Number.isNaN(idx)) scrollRightTo(idx);
+      });
+    }
+    const bridge = document.querySelector('#bridge_click textarea, #bridge_click input, #bridge_click');
+    if (bridge && !bridge.__syncBound){
+      bridge.__syncBound = true;
+      bridge.addEventListener('input', ()=>{
+        const v = bridge.value || "";
+        const m = /^P:(\d+)/.exec(v) || /^S:(\d+):/.exec(v);
+        if (m) scrollRightTo(parseInt(m[1], 10));
+      });
+    }
+  }
+  const mo = new MutationObserver(bind);
+  mo.observe(document.body, { subtree:true, childList:true });
+  bind();
+})();
+"""
+
+
 # ----------------------------- Helpers -----------------------------
 def _escape(s: str) -> str:
     return html.escape(s or "", quote=False).replace("\n", "<br>")
@@ -128,7 +167,6 @@ RUS_STOPWORDS_SHORT = {
     "из",
     "за",
     "у",
-
 }
 MIN_TERM_ALNUM_LEN = 2  # require ≥2 alnum chars to highlight
 
@@ -484,38 +522,35 @@ def _legend_html() -> str:
 
 # ----------------------------- Renderers -----------------------------
 _BRIDGE_JS = r"""
-<script>
-(function(){
+(() => {
   function emitBridge(val){
-    const el = document.querySelector('#bridge_click textarea');
+    const el =
+      document.querySelector('#bridge_click textarea, #bridge_click input, #bridge_click');
     if (!el) return;
     el.value = val;
-    el.dispatchEvent(new Event('input', {bubbles:true}));
+    el.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
-  // Use event delegation so listeners survive HTML re-renders
+  // Delegated listeners survive HTML re-renders
   document.addEventListener('click', function(e){
     // Claim span click
     const span = e.target.closest('.hl');
     if (span) {
       e.stopPropagation();
-      // local selection visuals
-      document.querySelectorAll('.hl.selected').forEach(el=>el.classList.remove('selected'));
+      document.querySelectorAll('.hl.selected').forEach(el => el.classList.remove('selected'));
       span.classList.add('selected');
       const pidx = span.getAttribute('data-pair');
       const lidx = span.getAttribute('data-left');
-      if (pidx !== null && lidx !== null) emitBridge('S:'+pidx+':'+lidx);
+      if (pidx !== null && lidx !== null) emitBridge(`S:${pidx}:${lidx}`);
       return;
     }
     // Paragraph card click
     const box = e.target.closest('.para-box');
     if (box && box.hasAttribute('data-idx')) {
-      const idx = box.getAttribute('data-idx');
-      emitBridge('P:'+idx);
+      emitBridge(`P:${box.getAttribute('data-idx')}`);
     }
   }, true);
 })();
-</script>
 """
 
 
@@ -576,82 +611,91 @@ def _render_right(
         If multiple left claims link to the same right claim with different labels, choose worst.
     """
     k, i_left = focus
-    if not (0 <= k < len(blocks)):
+    if not blocks:
         return '<div class="mirror-box">—</div>'
 
-    b = blocks[k]
-    out2 = b.get("output_2") or []
-    links, _left_color = _link_map_for_pair(b)
-
-    # choose right-side coloring
-    label_for_right: Dict[int, str] = {}
+    parts = []
     severity = {"contradiction": 3, "neutral": 2, "entailment": 1}
-    if i_left is None:
-        # worst label for each right claim across all left links
-        for li, pairs in links.items():
-            for rj, lbl in pairs:
-                if severity.get(lbl, 0) > severity.get(label_for_right.get(rj, ""), 0):
-                    label_for_right[rj] = lbl
-        show_indices = (
-            sorted(label_for_right.keys())
-            if label_for_right
-            else list(range(len(out2)))
-        )
-    else:
-        for rj, lbl in links.get(i_left, []):
-            if severity.get(lbl, 0) > severity.get(label_for_right.get(rj, ""), 0):
-                label_for_right[rj] = lbl
-        show_indices = sorted(label_for_right.keys())
 
-    # collect anchors for addition/neutral right spans
-    anchor_for_right: Dict[int, str] = {}
-    for rr in b.get("nli_results") or []:
-        lblr = str(rr.get("label") or "").lower()
-        if lblr in ("neutral", "addition"):
-            hyp = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
-            anc = rr.get("anchor")
-            if not anc:
-                continue
-            for jj, cc in enumerate(out2):
-                txtj = cc.get("claim") or cc.get("input") or ""
-                if txtj == hyp and jj not in anchor_for_right:
-                    anchor_for_right[jj] = str(anc)
-                    break
-    # build HTML
-    if show_indices:
-        spans = []
-        for j in show_indices:
-            c = out2[j]
-            raw = str(c.get("claim") or c.get("input") or "")
-            if (
-                i_left is not None
-                and target_right_idx is not None
-                and j == target_right_idx
-                and (contra_terms or {}).get("from_span_2")
-            ):
-                txt = _wrap_terms_html(
-                    raw, (contra_terms or {}).get("from_span_2") or []
+    for pi, b in enumerate(blocks):
+        body = "—"
+        head = f"Document B — matching claims (pair {pi+1})"
+
+        if pi == k:
+            out2 = b.get("output_2") or []
+            links, _left_color = _link_map_for_pair(b)
+
+            # choose right-side coloring for the selected pair
+            label_for_right: Dict[int, str] = {}
+            if i_left is None:
+                for li, pairs in links.items():
+                    for rj, lbl in pairs:
+                        if severity.get(lbl, 0) > severity.get(
+                            label_for_right.get(rj, ""), 0
+                        ):
+                            label_for_right[rj] = lbl
+                show_indices = (
+                    sorted(label_for_right.keys())
+                    if label_for_right
+                    else list(range(len(out2)))
                 )
             else:
-                txt = _escape(raw)
-            cls = "hl " + (label_for_right.get(j, "") or "")
-            # add anchor icon + tooltip for addition/neutral
-            anchor_sup = ""
-            if j in anchor_for_right:
-                anchor_sup = f' <sup class="anch" title="anchor: {_escape(anchor_for_right[j])}">🔗</sup>'
-            spans.append(
-                f'<span id="add-R-{k}-{j}" class="{cls}" data-pair="{k}" data-right="{j}">{txt}</span>{anchor_sup}'
-            )
-        body = "<br>".join(spans)
-    else:
-        body = _escape(_text_right(b))
+                for rj, lbl in links.get(i_left, []):
+                    if severity.get(lbl, 0) > severity.get(
+                        label_for_right.get(rj, ""), 0
+                    ):
+                        label_for_right[rj] = lbl
+                show_indices = sorted(label_for_right.keys())
 
-    return f"""
-      <div class="mirror-box">
-        <div class="para-head">Document B — {'matching claims' if i_left is not None else 'aligned paragraph'} (pair {k+1})</div>
-        <div>{body}</div>
-      </div>
-    """
+            # anchors for neutral/addition
+            anchor_for_right: Dict[int, str] = {}
+            for rr in b.get("nli_results") or []:
+                lblr = str(rr.get("label") or "").lower()
+                if lblr in ("neutral", "addition"):
+                    hyp = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
+                    anc = rr.get("anchor")
+                    if not anc:
+                        continue
+                    for jj, cc in enumerate(out2):
+                        txtj = cc.get("claim") or cc.get("input") or ""
+                        if txtj == hyp and jj not in anchor_for_right:
+                            anchor_for_right[jj] = str(anc)
+                            break
+
+            spans = []
+            for j in show_indices:
+                c = out2[j]
+                raw = str(c.get("claim") or c.get("input") or "")
+                if (
+                    i_left is not None
+                    and target_right_idx is not None
+                    and j == target_right_idx
+                    and (contra_terms or {}).get("from_span_2")
+                ):
+                    txt = _wrap_terms_html(
+                        raw, (contra_terms or {}).get("from_span_2") or []
+                    )
+                else:
+                    txt = _escape(raw)
+                cls = "hl " + (label_for_right.get(j, "") or "")
+                anchor_sup = ""
+                if j in anchor_for_right:
+                    anchor_sup = f' <sup class="anch" title="anchor: {_escape(anchor_for_right[j])}">🔗</sup>'
+                spans.append(
+                    f'<span id="add-R-{k}-{j}" class="{cls}" data-pair="{k}" data-right="{j}">{txt}</span>{anchor_sup}'
+                )
+            body = "<br>".join(spans) if spans else body
+
+        parts.append(
+            f"""
+            <div class="mirror-box pair-box" id="right-pair-{pi}">
+              <div class="para-head">{head}</div>
+              <div>{body}</div>
+            </div>
+            """
+        )
+
+    return "\n".join(parts)
 
 
 REASON_BY_LABEL = {
@@ -910,7 +954,9 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o-mini"):
 
 # ----------------------------- UI -----------------------------
 with gr.Blocks(
-    css=EXTRA_CSS, js=CUSTOM_JS, title="Semantic Mismatch — Full Pipeline"
+    css=EXTRA_CSS,
+    js=CUSTOM_JS + _BRIDGE_JS + _SYNC_SCROLL_JS,
+    title="Semantic Mismatch — Full Pipeline",
 ) as demo:
     # top nav + title
     gr.Markdown("## Full pipeline (dual-pane viewer)")
@@ -957,6 +1003,13 @@ with gr.Blocks(
                         label="Claim extraction system prompt",
                     )
                 with gr.Row():
+                    use_llm_contra = gr.Checkbox(
+                        value=True, label="Use LLM to extract contradicting terms"
+                    )
+                    contra_model = gr.Textbox(
+                        value="gpt-4o-mini", label="Model for term extraction", scale=2
+                    )
+                with gr.Row():
                     artifacts_json = gr.JSON(label="Artifacts", visible=False)
 
             run_btn = gr.Button("Run full pipeline", variant="primary")
@@ -973,22 +1026,16 @@ with gr.Blocks(
                     reason_html = gr.HTML(
                         label="Reasoning", value="", elem_id="reason_box"
                     )
-                with gr.Row():
-                    use_llm_contra = gr.Checkbox(
-                        value=True, label="Use LLM to extract contradicting terms"
-                    )
-                    contra_model = gr.Textbox(
-                        value="gpt-4o-mini", label="Model for term extraction", scale=2
-                    )
 
             pair_picker = gr.Radio(
                 choices=[],
                 value=None,
                 label="Show Document B for paragraph…",
                 interactive=True,
+                elem_id="pair_picker",
             )
             # bridge for click events
-            bridge_click = gr.Textbox(visible=False, elem_id="bridge_click")
+            bridge_click = gr.Textbox(value="", visible=False, elem_id="bridge_click")
 
             # hidden state
             pairs_state = gr.State([])
