@@ -55,14 +55,19 @@ body{ margin-left:140px !important; }
 """
 
 
+# nav_tag = """
+# <div id="sidebar">
+#     <a href="/">Pipeline</a>
+#     <a href="/full_pipeline/">Full Pipeline</a>
+#     <a href="/pipeline-llm/">Pipeline-LLM</a>
+#     <a href="/pipeline-llm-new/">Pipeline-LLM-NEW</a>
+#     <a href="/nli/">NLI Viewer</a>
+#     <a href="/convert/">Convert CSV</a>
+# </div>
+# """
 nav_tag = """
 <div id="sidebar">
-    <a href="/">Pipeline</a>
-    <a href="/full_pipeline/">Full Pipeline</a>
-    <a href="/pipeline-llm/">Pipeline-LLM</a>
     <a href="/pipeline-llm-new/">Pipeline-LLM-NEW</a>
-    <a href="/nli/">NLI Viewer</a>
-    <a href="/convert/">Convert CSV</a>
 </div>
 """
 
@@ -237,6 +242,61 @@ CUSTOM_JS = """
       rb.style.minHeight = h > 0 ? (h + 'px') : '';
     }
   }
+
+  // =================== STRICT 1↔1 ROW ALIGNMENT BY data-idx ===================
+  function alignRightToLeftByIdx() {
+    const left = Array.from(document.querySelectorAll('#left_pane .para-box[data-idx]'));
+    const right = Array.from(document.querySelectorAll('#right_pane .mirror-box[data-idx]'));
+    if (!left.length || !right.length) return;
+
+    // reset previous adjustments
+    right.forEach(rb => { rb.style.marginTop = ''; });
+
+    // map left boxes by data-idx
+    const leftByIdx = {};
+    left.forEach(lb => { leftByIdx[lb.getAttribute('data-idx')] = lb; });
+
+    // baseline tops (so we work in the same relative coordinate space)
+    const left0 = left[0].getBoundingClientRect().top;
+    const right0 = right[0].getBoundingClientRect().top;
+
+    // for each right box, align to the left with the same data-idx
+    right.forEach(rb => {
+      const idx = rb.getAttribute('data-idx');
+      const lb  = leftByIdx[idx];
+      if (!lb) return;  // skip if that idx doesn't exist on the left
+
+      const desired = Math.round(lb.getBoundingClientRect().top - left0);
+      const current = Math.round(rb.getBoundingClientRect().top - right0);
+      const delta = desired - current;
+
+      // push this right box down/up so its top equals the left's top
+      rb.style.marginTop = delta + 'px';
+    });
+  }
+
+  // simple throttle to avoid doing too much work during resize/renders
+  let _alignTimer = null;
+  function scheduleAlignByIdx(delay=80) {
+    if (_alignTimer) clearTimeout(_alignTimer);
+    _alignTimer = setTimeout(() => {
+      _alignTimer = null;
+      alignRightToLeftByIdx();
+    }, delay);
+  }
+
+  // run on load, resize, and after your bridge-driven updates
+  window.addEventListener('load', () => scheduleAlignByIdx(250));
+  window.addEventListener('resize', () => scheduleAlignByIdx(50));
+
+  // hook into your existing click logic: after "P:<idx>" bridge update, align
+  document.addEventListener('click', function(e){
+    const para = e.target && e.target.closest ? e.target.closest('.para-box[data-idx]') : null;
+    if (para) {
+      // give Gradio a moment to re-render right column, then align
+      scheduleAlignByIdx(120);
+    }
+  }, true);
 
   function scheduleAlign(idx){
     // Try a few times to wait for Gradio DOM updates

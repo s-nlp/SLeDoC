@@ -16,7 +16,6 @@ import gradio as gr
 from app.align_docs import (
     Encoder,
     build_output_json,
-    filter_non_russian,
     find_best_matches_with_window,
     get_paragraphs_from_docx,
     merge_incomplete_sentences,
@@ -591,6 +590,16 @@ REASON_BY_LABEL = {
 }
 
 
+def _hover_color(lbl: str) -> str:
+    # Match your left-side hover palette as close as possible
+    PALETTE = {
+        "contradiction": "#ffd6c2",  # soft red-ish
+        "neutral": "#fff3a0",  # yellow
+        "entailment": "#d6ffd6",  # soft green
+    }
+    return PALETTE.get(lbl or "", "#fff3a0")  # default to yellow
+
+
 def _render_right_col(
     blocks: List[Dict[str, Any]],
     focus: Tuple[int, Optional[int]],
@@ -640,6 +649,27 @@ def _render_right_col(
                                     )
                                     break
             if out2:
+                # Build a "best left for each right" map so we can set data-target/hcolor
+                best_for_right: Dict[int, Tuple[int, str]] = {}  # rj -> (li, lbl)
+
+                if i_left is None:
+                    # pick the strongest label per right j over all left i
+                    for li, pairs in links.items():
+                        for rj, lbl in pairs:
+                            prev = best_for_right.get(rj)
+                            if prev is None or severity.get(lbl, 0) > severity.get(
+                                prev[1], 0
+                            ):
+                                best_for_right[rj] = (li, lbl)
+                else:
+                    # restrict to the currently selected left i_left
+                    for rj, lbl in links.get(i_left, []):
+                        prev = best_for_right.get(rj)
+                        if prev is None or severity.get(lbl, 0) > severity.get(
+                            prev[1], 0
+                        ):
+                            best_for_right[rj] = (i_left, lbl)
+
                 spans = []
                 for j, c in enumerate(out2):
                     raw = str(c.get("claim") or c.get("input") or "")
@@ -652,14 +682,32 @@ def _render_right_col(
                         txt = _wrap_terms_html(raw, contra_terms.get("to_span_2") or [])
                     else:
                         txt = _escape(raw)
-                    cls = "hl " + (label_for_right.get(j, "") or "")
+
+                    # label class for background baseline (CSS), plus hover color via data-hcolor
+                    lbl = label_for_right.get(j, "") or ""
+                    cls = "hl " + lbl
+
+                    # set data-target to the best left counterpart if we have one
+                    li_for_j = best_for_right.get(j)
+                    if li_for_j:
+                        li_idx, lbl_for_j = li_for_j
+                        target_attr = f' data-target="L-{idx}-{li_idx}"'
+                        hcolor_attr = f' data-hcolor="{_hover_color(lbl_for_j)}"'
+                    else:
+                        target_attr = ""
+                        hcolor_attr = f' data-hcolor="{_hover_color(lbl or "neutral")}"'
+
                     anchor_sup = ""
                     if j in anchor_for_right:
                         anchor_sup = f' <sup class="anch" title="anchor: {_escape(anchor_for_right[j])}">🔗</sup>'
+
                     spans.append(
-                        f'<span id="R-{idx}-{j}" class="{cls}" data-pair="{idx}" data-right="{j}">{txt}</span>{anchor_sup}'
+                        f'<span id="R-{idx}-{j}" class="{cls}"'
+                        f' data-pair="{idx}" data-right="{j}"{target_attr}{hcolor_attr}>{txt}</span>{anchor_sup}'
                     )
+
                 body = "<br>".join(spans)
+
             else:
                 body = _escape(_text_right(b))
         else:
@@ -737,8 +785,8 @@ def _align_stage0(
     # Enforce document length restriction (≤ 5000 characters each)
     try:
         paragraphs_a = merge_incomplete_sentences(get_paragraphs_from_docx(p1))
-        paragraphs_b = filter_non_russian(
-            separate_points(merge_incomplete_sentences(get_paragraphs_from_docx(p2)))
+        paragraphs_b = separate_points(
+            merge_incomplete_sentences(get_paragraphs_from_docx(p2))
         )
         len_a = sum(len(x) for x in paragraphs_a)
         len_b = sum(len(x) for x in paragraphs_b)
