@@ -679,7 +679,9 @@ def _render_right_col(
                         and j == int(target_right_idx)
                         and contra_terms
                     ):
-                        txt = _wrap_terms_html(raw, contra_terms.get("to_span_2") or [])
+                        txt = _wrap_terms_html(
+                            raw, (contra_terms or {}).get("from_span_2") or []
+                        )
                     else:
                         txt = _escape(raw)
 
