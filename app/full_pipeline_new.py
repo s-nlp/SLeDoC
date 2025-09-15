@@ -24,13 +24,13 @@ from app.align_docs import (
 
 # Stage 1
 from app.claim_extractor import DEFAULT_SYSTEM_PROMPT, run_claim_extraction
+from app.config import LLM_NLI_SYSTEM_PROMPT
 
 # Stage 2
 from app.nli_predict import _list_models, run_nli_file
 from app.openai_client import make_client
 
 # Stage 1+2 via LLM
-from app.pipeline_llm import SYSTEM_PROMPT as LLM_NLI_SYSTEM_PROMPT
 from app.pipeline_llm import run_llm_nli_file
 
 # Shared UI assets

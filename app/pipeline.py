@@ -8,8 +8,7 @@ from app.align_docs import demo as align_demo
 from app.claim_extractor import DEFAULT_SYSTEM_PROMPT, run_claim_extraction
 from app.combine_pairs import demo as combine_demo
 from app.nli_predict import demo as nli_predict_demo
-from app.pipeline_llm import SYSTEM_PROMPT as LLM_NLI_SYSTEM_PROMPT
-from app.pipeline_llm import run_llm_nli_file
+from app.pipeline_llm import LLM_NLI_SYSTEM_PROMPT, run_llm_nli_file
 from app.settings import nav_tag, side_bar
 
 

@@ -18,16 +18,17 @@ from app.align_docs import (
 )
 
 # Stage 1
-from app.claim_extractor import DEFAULT_SYSTEM_PROMPT, run_claim_extraction
+from app.claim_extractor import run_claim_extraction
 
 # Stage 3 building blocks
 from app.combine_pairs import _preview_html, choose, download
+from app.config import CLAIM_EXTRACTOR_SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT
+from app.config import LLM_NLI_SYSTEM_PROMPT
 
 # Stage 2
 from app.nli_predict import _list_models, run_nli_file
 
 # Stage 1+2 with LLM
-from app.pipeline_llm import SYSTEM_PROMPT as LLM_NLI_SYSTEM_PROMPT
 from app.pipeline_llm import run_llm_nli_file
 
 from .settings import nav_tag, side_bar

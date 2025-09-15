@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import openai
-from dotenv import load_dotenv
 from tenacity import (
     AsyncRetrying,
     retry,
@@ -16,10 +15,35 @@ from tenacity import (
     wait_random_exponential,
 )
 
+from app.config import CLAIM_EXTRACTOR_SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT
+from app.config import LLM_MAX_PARALLEL
 from app.openai_client import make_async_client, make_client
 
 os.environ["TOKENIZERS_PARALLELISM"] = "True"
-load_dotenv()
+
+
+def run_claim_extraction(
+    input_path: str | Path,
+    output_path: str | Path | None = None,
+    *,
+    system_prompt: str = "",
+    model_name: str = "gpt-4o",
+    temperature: float = 0.2,
+) -> Path:
+    """Sync wrapper around `run_claim_extraction_async` enabling parallel LLM calls."""
+    # Fallback order: UI -> ENV -> DEFAULT
+    resolved_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+    return asyncio.run(
+        run_claim_extraction_async(
+            input_path,
+            output_path=output_path,
+            system_prompt=resolved_prompt,
+            model_name=model_name,
+            temperature=temperature,
+            max_concurrency=LLM_MAX_PARALLEL,
+        )
+    )
+
 
 default_api_key = os.getenv("OPENAI_API_KEY", "")
 
@@ -28,25 +52,6 @@ if not default_api_key:
         "OpenAI API key missing. Specify it in the UI or set "
         "OPENAI_API_KEY in your environment (e.g. via .env)."
     )
-
-
-DEFAULT_SYSTEM_PROMPT = """Ты — юридический аналитик, который разбивает сложное юридическое предложение на минимальные смысловые единицы для подачи в модель Natural Language Inference (NLI).
-
-Твоя задача – разбить входное предложение на минимальные самодостаточные утверждения, каждое из которых выражает законченную мысль.
-
-Каждое утверждение должно быть:
-- самодостаточным (не должно содержать местоимений и ссылок вроде "этот", "он", "такой")
-- пригодным для подачи в NLI-модель
-- грамматически корректным, юридически точным
-- Для каждого утверждения укажи, из какого фрагмента исходного предложения оно получено (копируя ДОСЛОВНО участок текста, на котором оно основано).
-
-Формат ответа:
-[
-  {
-    "input": <Исходный кусок текста, скопированный дословно>,
-    "claim": <Переписанное утверждение>
-  }
-]"""
 
 
 # Low-level OpenAI wrapper with basic exponential-back-off
@@ -101,28 +106,6 @@ def _extract_for_paragraph(
     return _postprocess_to_list(raw)
 
 
-# Public helper for a whole JSON file
-def run_claim_extraction(
-    input_path: str | Path,
-    output_path: str | Path | None = None,
-    *,
-    system_prompt: str = DEFAULT_SYSTEM_PROMPT,
-    model_name: str = "gpt-4o",
-    temperature: float = 0.2,
-) -> Path:
-    """Sync wrapper around `run_claim_extraction_async` enabling parallel LLM calls."""
-    return asyncio.run(
-        run_claim_extraction_async(
-            input_path,
-            output_path=output_path,
-            system_prompt=system_prompt,
-            model_name=model_name,
-            temperature=temperature,
-            max_concurrency=8,
-        )
-    )
-
-
 async def _achat_completion(
     prompt: str, system_prompt: str, model_name: str, temperature: float
 ) -> str:
@@ -164,6 +147,9 @@ async def run_claim_extraction_async(
     if output_path is None:
         output_path = input_path.with_name(f"{input_path.stem}_claims.json")
     output_path = Path(output_path)
+
+    system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+    max_concurrency = max_concurrency or LLM_MAX_PARALLEL
 
     data = json.loads(input_path.read_text(encoding="utf-8"))
     sem = asyncio.Semaphore(int(max(1, max_concurrency)))
