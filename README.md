@@ -20,8 +20,20 @@ app/ Python package
 └─ Makefile
 ```
 
+## Configuration (.env)
+
+Create a `.env` from `.env.example` (or set these in your process manager):
+
+- `OPENAI_API_KEY` or `OPENROUTER_API_KEY` — LLM provider key.
+- `LLM_MAX_PARALLEL` — max concurrent LLM calls (default: 8).
+- `LLM_NLI_SYSTEM_PROMPT_FILE` — path to system prompt for the end-to-end LLM branch.
+- `CLAIM_EXTRACTOR_SYSTEM_PROMPT_FILE` — path to system prompt for the claim-extraction stage.
+
+You may also inline long prompts via `LLM_NLI_SYSTEM_PROMPT` / `CLAIM_EXTRACTOR_SYSTEM_PROMPT`
+
+
 ## Quick start (Docker)
-Перед любым запуском необходимо создать файл с кредами:
+Before any launch need to create an environment file:
 `.env`:
 ```bash
 OPENAI_API_KEY="sk-proj-"

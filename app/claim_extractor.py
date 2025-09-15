@@ -22,7 +22,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "True"
 load_dotenv()
 
 default_api_key = os.getenv("OPENAI_API_KEY", "")
-print(default_api_key)
+
 if not default_api_key:
     raise ValueError(
         "OpenAI API key missing. Specify it in the UI or set "
