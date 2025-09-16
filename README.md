@@ -37,6 +37,9 @@ Before any launch need to create an environment file:
 OPENAI_API_KEY="sk-proj-"
 OPENROUTER_API_KEY="sk-or-"
 DEFAULT_MODEL="openrouter/mistral-7b"
+LLM_MAX_PARALLEL="8"
+LLM_NLI_SYSTEM_PROMPT_FILE="prompts/llm_nli_system.en.md"
+CLAIM_EXTRACTOR_SYSTEM_PROMPT_FILE="prompts/llm_align_defaut.en.md"
 ```
 
 ```bash
