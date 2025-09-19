@@ -282,6 +282,7 @@ CUSTOM_JS = """
     _alignTimer = setTimeout(() => {
       _alignTimer = null;
       alignRightToLeftByIdx();
+      scheduleEqualize(60);
     }, delay);
   }
 
@@ -297,6 +298,40 @@ CUSTOM_JS = """
       scheduleAlignByIdx(120);
     }
   }, true);
+
+  function equalizePaneHeights() {
+    const L = document.getElementById('left_pane');
+    const R = document.getElementById('right_pane');
+    if (!L || !R) return;
+
+    // clear previous min-heights so we measure natural sizes
+    L.style.minHeight = '';
+    R.style.minHeight = '';
+
+    // Use offsetHeight (layouted height); scrollHeight also works if content overflows
+    const h = Math.max(L.offsetHeight, R.offsetHeight);
+    // apply the same min-height to both
+    L.style.minHeight = h + 'px';
+    R.style.minHeight = h + 'px';
+  }
+
+  // small scheduler so we run after the DOM has settled
+  function scheduleEqualize(delay = 80) {
+    setTimeout(equalizePaneHeights, delay);
+  }
+
+  // Observe DOM changes inside the panes and re-equalize
+  (function observePanes(){
+    const L = document.getElementById('left_pane');
+    const R = document.getElementById('right_pane');
+    if (!L || !R || !('MutationObserver' in window)) return;
+
+    const obs = new MutationObserver(() => scheduleEqualize(40));
+    const opts = { childList: true, subtree: true, characterData: true };
+    obs.observe(L, opts);
+    obs.observe(R, opts);
+  })();
+
 
   function scheduleAlign(idx){
     // Try a few times to wait for Gradio DOM updates

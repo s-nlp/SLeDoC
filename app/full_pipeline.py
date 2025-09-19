@@ -210,8 +210,8 @@ def _run_all(
     progress_html = ""
     pairs = []
     idx0 = -1
-    seen = set()
-    final_state = []
+    _ = set()
+    _ = []
     label = "—"
     left = ""
     right = ""

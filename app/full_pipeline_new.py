@@ -45,6 +45,8 @@ EXTRA_CSS = (
 .viewer-wrap { display:flex; gap:16px; align-items:flex-start; }
 .left-pane  { flex: 2 1 0; min-width: 420px; }
 .right-pane { flex: 1 1 0; position: static; max-height: 80vh; overflow:auto; }
+#viewer_row { align-items: stretch; }
+#left_pane, #right_pane { display: block; }
 
 /* paragraph card */
 .para-box{
@@ -100,6 +102,7 @@ EXTRA_CSS = (
 .reason-title { font-weight:700; margin:8px 0 4px; }
 .reason-card { border:1px dashed #cbd5e1; background:#fff; padding:8px 10px; border-radius:10px; font-size:14px; }
 
+/; contradiction focus box */
 .contra-box { margin-top:10px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fafafa }
 .contra-head { font-weight:600;margin-bottom:6px }
 .contra-row { display:flex;gap:8px;align-items:flex-start;margin:4px 0 }
@@ -935,7 +938,7 @@ def _bridge_update(pairs: List[Dict[str, Any]], bridge_value: str):
 
 
 def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o-mini"):
-    k, l = 0, None
+    k, l_ = 0, None
     try:
         if v and v.startswith("P:"):
             k = int(v.split(":", 1)[1])
@@ -947,31 +950,34 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o-mini"):
             )
         if v and v.startswith("S:"):
             _t, a, b = v.split(":")
-            k, l = int(a), int(b)
+            k, l_ = int(a), int(b)
             info = _compute_contra_terms_for_focus(
-                ps or [], (k, l), bool(use_llm_contra), contra_model_id or "gpt-4o-mini"
+                ps or [],
+                (k, l_),
+                bool(use_llm_contra),
+                contra_model_id or "gpt-4o-mini",
             )
             if not info:
                 return (
                     _render_left(ps or []),
-                    _render_right_col(ps or [], (k, l)),
-                    _render_reason(ps or [], (k, l)),
+                    _render_right_col(ps or [], (k, l_)),
+                    _render_reason(ps or [], (k, l_)),
                     gr.update(value=str(k + 1)),
                 )
             terms = info["terms"]
             rj = info["right_idx"]
             return (
-                _render_left(ps or [], (k, l), terms),
-                _render_right_col(ps or [], (k, l), terms, rj),
-                _render_reason(ps or [], (k, l)),
+                _render_left(ps or [], (k, l_), terms),
+                _render_right_col(ps or [], (k, l_), terms, rj),
+                _render_reason(ps or [], (k, l_)),
                 gr.update(value=str(k + 1)),
             )
     except Exception:
         pass
     return (
         _render_left(ps or []),
-        _render_right_col(ps or [], (k, l)),
-        _render_reason(ps or [], (k, l)),
+        _render_right_col(ps or [], (k, l_)),
+        _render_reason(ps or [], (k, l_)),
         gr.update(value=str(k + 1)),
     )
 
@@ -1037,7 +1043,7 @@ with gr.Blocks(
             run_btn = gr.Button("Run full pipeline", variant="primary")
             gr.HTML(_legend_html(), elem_id="viewer_legend")
 
-            with gr.Row():
+            with gr.Row(elem_id="viewer_row"):
                 with gr.Column(scale=2):
                     left_html = gr.HTML(
                         label="Document A (claims)", value="", elem_id="left_pane"
