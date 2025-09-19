@@ -36,7 +36,7 @@ from app.pipeline_llm import run_llm_nli_file
 # Shared UI assets
 from app.settings import CUSTOM_JS, EXTRA_CSS, nav_tag, side_bar
 
-# ----------------------------- Styling -----------------------------
+# Styling
 EXTRA_CSS = (
     EXTRA_CSS
     + side_bar
@@ -87,7 +87,6 @@ EXTRA_CSS = (
 .legend .dot.ent { background:#22c55e; } /* entailment */
 .legend .dot.con { background:#f43f5e; } /* contradiction */
 .legend .dot.neu { background:#3b82f6; } /* addition/neutral */
-#conf_box { font-weight:600; }
 
 /* dynamic heights */
 .para-box{ min-height: unset; }
@@ -97,22 +96,23 @@ EXTRA_CSS = (
 #right_pane { position: static; max-height: unset; overflow: visible; }
 
 /* reasoning panel */
-.reason-wrap{ margin-top:8px; display:flex; flex-direction:column; gap:8px; }
-.reason-card{ border:1px dashed #cbd5e1; background:#fff; padding:8px 10px; border-radius:10px; font-size:14px; }
+.reason-wrap { margin-top:8px; display:flex; flex-direction:column; gap:8px; }
+.reason-title { font-weight:700; margin:8px 0 4px; }
+.reason-card { border:1px dashed #cbd5e1; background:#fff; padding:8px 10px; border-radius:10px; font-size:14px; }
 
-.contra-box{margin-top:10px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fafafa}
-.contra-head{font-weight:600;margin-bottom:6px}
-.contra-row{display:flex;gap:8px;align-items:flex-start;margin:4px 0}
-.side-tag{font-size:12px;color:#6b7280;padding:2px 6px;border:1px solid #e5e7eb;border-radius:9999px}
-.side-pills{display:flex;gap:6px;flex-wrap:wrap}
-.pill{display:inline-block;padding:2px 8px;border:1px solid #d1d5db;border-radius:9999px;background:white;font-size:12px}
-.contra-src{margin-top:8px;font-size:12px;color:#6b7280;display:grid;gap:2px}
-.src-tag{font-weight:600;color:#4b5563}
+.contra-box { margin-top:10px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fafafa }
+.contra-head { font-weight:600;margin-bottom:6px }
+.contra-row { display:flex;gap:8px;align-items:flex-start;margin:4px 0 }
+.side-tag { font-size:12px;color:#6b7280;padding:2px 6px;border:1px solid #e5e7eb;border-radius:9999px }
+.side-pills { display:flex;gap:6px;flex-wrap:wrap }
+.pill { display:inline-block;padding:2px 8px;border:1px solid #d1d5db;border-radius:9999px;background:white;font-size:12px }
+.contra-src { margin-top:8px;font-size:12px;color:#6b7280;display:grid;gap:2px }
+.src-tag { font-weight:600;color:#4b5563 }
 """
 )
 
 
-# ----------------------------- Helpers -----------------------------
+# Helpers
 def _escape(s: str) -> str:
     return html.escape(s or "", quote=False).replace("\n", "<br>")
 
@@ -435,7 +435,7 @@ def _link_map_for_pair(
 def _legend_html() -> str:
     return (
         '<div class="toolbar">'
-        '<div id="conf_box">Confidence: —</div>'
+        # '<div id="conf_box">Confidence: —</div>'
         '<div class="legend">'
         '<span class="key"><span class="dot ent"></span> entailment (equivalent)</span>'
         '<span class="key"><span class="dot con"></span> contradiction</span>'
@@ -455,7 +455,8 @@ def _render_left(
     Big left pane: for each pair, show Document A claims as spans, colored by worst NLI link.
     If no claims available for a block, fall back to raw paragraph text.
     """
-    html_parts = ['<div class="viewer-wrap"><div class="left-pane">', _legend_html()]
+    # html_parts = ['<div class="viewer-wrap"><div class="left-pane">', _legend_html()]
+    html_parts = ['<div class="viewer-wrap"><div class="left-pane">']
     for pi, b in enumerate(blocks):
         out1 = b.get("output_1") or []
         links, left_color = _link_map_for_pair(b)
@@ -765,7 +766,11 @@ def _render_reason(blocks, focus):
         if reason:
             items = [f'<div class="reason-card">{html.escape(str(reason))}</div>']
 
-    return '<div class="reason-wrap">' + "".join(items) + "</div>"
+    return (
+        '<div class="reason-wrap"><div class="reason-title"><b>Explanation</b></div>'
+        + "".join(items)
+        + "</div>"
+    )
 
 
 # ----------------------------- Pipeline -----------------------------
@@ -971,7 +976,7 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o-mini"):
     )
 
 
-# ----------------------------- UI -----------------------------
+# UI
 with gr.Blocks(
     css=EXTRA_CSS, js=CUSTOM_JS, title="Semantic Mismatch — Full Pipeline"
 ) as demo:
@@ -1030,9 +1035,10 @@ with gr.Blocks(
                     artifacts_json = gr.JSON(label="Artifacts", visible=False)
 
             run_btn = gr.Button("Run full pipeline", variant="primary")
+            gr.HTML(_legend_html(), elem_id="viewer_legend")
 
             with gr.Row():
-                with gr.Column(scale=3):
+                with gr.Column(scale=2):
                     left_html = gr.HTML(
                         label="Document A (claims)", value="", elem_id="left_pane"
                     )

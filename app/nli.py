@@ -27,7 +27,7 @@ def _escape(s: str) -> str:
 def _span_regex(span: str) -> re.Pattern:
     """
     Build a tolerant regex for a given span:
-    - collapse any whitespace runs in span to \s+
+    - collapse any whitespace runs in span to \\s+
     - exact match for other chars (escaped)
     """
     s = span.strip()
