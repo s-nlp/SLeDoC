@@ -6,9 +6,9 @@ from typing import Dict, List, Tuple
 
 import gradio as gr
 
-from .settings import CUSTOM_JS, EXTRA_CSS, nav_tag, side_bar
+from .settings import BASE_CSS, CUSTOM_JS, SIDEBAR_CSS, nav_tag
 
-EXTRA_CSS += side_bar
+EXTRA_CSS = BASE_CSS + SIDEBAR_CSS
 PASTELS = ["#dbeafe55", "#ddd6fe55", "#e5e5e555"]  # faint pastels
 ENTAIL_CLR, CONTRA_CLR = "#22c55e", "#f43f5e"  # bright colours
 DATA_FILE = Path("example_data/nli_viewer_llm.json")  # initial demo data

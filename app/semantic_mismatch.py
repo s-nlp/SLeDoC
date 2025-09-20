@@ -4,7 +4,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from .settings import nav_tag, side_bar
+from .settings import SIDEBAR_CSS, nav_tag
 
 EXTRA_CSS = """
 .para-box{
@@ -48,7 +48,7 @@ EXTRA_CSS = """
 .hl.dimmed  {opacity:.35;}
 """
 
-EXTRA_CSS += side_bar
+EXTRA_CSS += SIDEBAR_CSS
 
 
 DEFAULT_JSON = Path("example_data/pairs.json")

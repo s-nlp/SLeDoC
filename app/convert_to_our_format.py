@@ -7,7 +7,7 @@ from typing import Dict, List
 import gradio as gr
 import pandas as pd
 
-from .settings import nav_tag, side_bar
+from .settings import SIDEBAR_CSS, nav_tag
 
 LABEL_MAP_DEFAULT = {
     "equivalent": "entailment",
@@ -150,7 +150,7 @@ def _convert_tmp(csv_file, label_map_text, keep_reasoning):
 
 def build_demo():
     with gr.Blocks(
-        title="Convert CSV → NLI JSON", css=side_bar, theme=gr.themes.Soft()
+        title="Convert CSV → NLI JSON", css=SIDEBAR_CSS, theme=gr.themes.Soft()
     ) as demo:
         gr.HTML(nav_tag)
         gr.Markdown(

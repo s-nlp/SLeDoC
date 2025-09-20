@@ -1,22 +1,5 @@
-side_bar_left_top = """
-/* ── left nav bar ────────────────────────────────────────────────────── */
-#sidebar{
-    position:fixed; left:0; top:0; bottom:0; width:140px;
-    background:#202124; color:#fff; padding:12px 8px; box-sizing:border-box;
-    display:flex; flex-direction:column; gap:8px;
-}
-#sidebar a{
-    display:block; padding:8px 4px; border-radius:4px;
-    color:#fff; text-decoration:none; text-align:center;
-    background:#3d4043; font-weight:600; font-size:14px;
-}
-#sidebar a:hover{ background:#5f6368; }
-body{ margin-left:140px !important; }   /* push the app aside */
-"""
-
-
-side_bar = """
-/* ── left-bottom nav bar ─────────────────────────────────────────────── */
+SIDEBAR_CSS = """
+/* Sidebar placed on the left bottom */
 #sidebar{
     position:fixed;
     left:0;                       /* stick to left edge */
@@ -72,23 +55,51 @@ nav_tag = """
 """
 
 
-# NLI VIEWER
-# поведение курсора и подсветки в NLI Viewer
-EXTRA_CSS = """
+# Base visual language used across the app (cards, badges, highlights)
+BASE_CSS = """
+/* Cards for paragraphs */
 .para-box{
-    border:1px solid #000; padding:8px; min-height:320px; min-width:320px;
+border:1px solid #adb5bd; padding:12px; border-radius:12px;
+margin:12px 0; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.05);
 }
-/* вид курсора - pointer*/
-.hl{position:relative; cursor:pointer;}
-/* какой цвет будет у выделенного span при нажатии */
-.hl.selected     { outline:2px solid #000; }
-/* какой цвет будет у других span при нажатии на выделенный */
-.hl.dimmed       { opacity:.35; }
-/* что будет показываться при нажатии курсором */
-.hl:hover::after,.hl:focus::after{ content:none; display:none; }
+.para-head{ font-size:12px; color:#667085; margin-bottom:6px; }
+
+
+/* Claim spans */
+.hl{ position:relative; padding:0 3px; border-radius:5px; cursor:pointer; }
+.hl:hover{ outline:1px dashed #888; }
+
+
+/* NLI palette (soft) */
+.hl.entailment { background: rgba(34,197,94,.18); }
+.hl.neutral { background: rgba(59,130,246,.18); }
+.hl.contradiction { background: rgba(244,63,94,.18); }
+
+
+/* Explicit contradiction terms highlight */
+.contra-term{ background:#fff59a; padding:0 2px; border-radius:4px; }
+
+
+/* Selection and dimming */
+.hl.selected{ outline:2px solid #111; box-shadow:0 0 0 3px rgba(0,0,0,.06) inset; }
+.hl.dimmed{ filter:saturate(.3) brightness(.95); }
+
+
+/* Simple badge */
+.badge{ display:inline-block; padding:2px 6px; border-radius:9999px; font-size:11px; }
+.badge-danger{ background:#fee2e2; color:#b91c1c; }
+.badge-info{ background:#dbeafe; color:#1d4ed8; }
+
+
+/* Hide Gradio’s default block padding around HTML blocks for tighter stacking */
+#left_pane .gr-html, #right_pane .gr-html{ padding:0 !important; }
+
+
+/* Reasoning title */
+#reason_box h3 { margin: 0 0 8px 0; font-weight: 700; }
 """
 
-# скрипт курсора + показывает скор уверенности + правое окно
+# All the custom JS for interactivity and alignment
 CUSTOM_JS = """
 () => {
   const confBox = () => document.getElementById('conf_box');
@@ -179,7 +190,7 @@ CUSTOM_JS = """
     document.querySelectorAll(`.hl[data-pair="${pair}"]:not(.selected)`).forEach(el => el.classList.add('dimmed'));
 
     // align after Gradio re-render
-    if (typeof scheduleAlignByIdx === 'function') scheduleAlignByIdx(120);  
+    if (typeof scheduleAlignByIdx === 'function') scheduleAlignByIdx(120);
   });
 
   // ---- Bridge clicks from left viewer to hidden Gradio Textbox (#bridge_click) ----

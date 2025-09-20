@@ -8,7 +8,7 @@ from typing import Dict, List
 import gradio as gr
 from lettucedetect.models.inference import HallucinationDetector
 
-from app.settings import nav_tag, side_bar
+from app.settings import SIDEBAR_CSS, nav_tag
 
 #  Config
 LOGLEVEL = (pathlib.os.getenv("LOGLEVEL") or "INFO").upper()
@@ -19,7 +19,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-EXTRA_CSS = side_bar
+EXTRA_CSS = SIDEBAR_CSS
 
 # Base directory where the NLI transformer models are stored.
 MODEL_BASE = (Path(__file__).resolve().parent.parent / "nli" / "output").resolve()

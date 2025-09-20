@@ -31,7 +31,7 @@ from app.nli_predict import _list_models, run_nli_file
 # Stage 1+2 with LLM
 from app.pipeline_llm import run_llm_nli_file
 
-from .settings import nav_tag, side_bar
+from .settings import SIDEBAR_CSS, nav_tag
 
 
 def _align_stage0(doc1, doc2, model_id, device, batch_size, window_size, threshold):
@@ -321,7 +321,7 @@ def _run_all(
     )
 
 
-with gr.Blocks(css=side_bar + EXTRA_CSS, fill_height=True) as demo:
+with gr.Blocks(css=SIDEBAR_CSS + EXTRA_CSS, fill_height=True) as demo:
     gr.HTML(nav_tag)
     gr.Markdown("## Full Pipeline")
 

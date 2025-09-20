@@ -13,7 +13,7 @@ from docx import Document
 from torch import Tensor
 from transformers import AutoModel, AutoTokenizer
 
-from .settings import nav_tag, side_bar
+from .settings import SIDEBAR_CSS, nav_tag
 
 
 # -------------------- text extraction & segmentation --------------------
@@ -203,7 +203,7 @@ def _align(doc1, doc2, model_id, device, batch_size, window_size, threshold):
 
 def build_demo():
     with gr.Blocks(
-        title="Step‑0: Align documents", css=side_bar, theme=gr.themes.Soft()
+        title="Step‑0: Align documents", css=SIDEBAR_CSS, theme=gr.themes.Soft()
     ) as demo:
         gr.HTML(nav_tag)
         gr.Markdown(

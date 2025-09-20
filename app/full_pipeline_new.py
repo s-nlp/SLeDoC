@@ -34,12 +34,12 @@ from app.openai_client import make_client
 from app.pipeline_llm import run_llm_nli_file
 
 # Shared UI assets
-from app.settings import CUSTOM_JS, EXTRA_CSS, nav_tag, side_bar
+from app.settings import BASE_CSS, CUSTOM_JS, SIDEBAR_CSS, nav_tag
 
 # Styling
 EXTRA_CSS = (
-    EXTRA_CSS
-    + side_bar
+    BASE_CSS
+    + SIDEBAR_CSS
     + """
 /* dual-pane viewer layout */
 .viewer-wrap { display:flex; gap:16px; align-items:flex-start; }
@@ -1066,7 +1066,7 @@ with gr.Blocks(
                         label="Document B (matches)", value="", elem_id="right_pane"
                     )
                     reason_html = gr.HTML(
-                        label="Reasoning", value="", elem_id="reason_box"
+                        label="Explanation", value="", elem_id="reason_box"
                     )
 
             pair_picker = gr.Radio(

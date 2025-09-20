@@ -18,7 +18,7 @@ from tenacity import (
 from app.config import LLM_MAX_PARALLEL, LLM_NLI_SYSTEM_PROMPT
 from app.convert_to_our_format import LABEL_MAP_DEFAULT
 from app.openai_client import make_async_client, make_client
-from app.settings import nav_tag, side_bar
+from app.settings import SIDEBAR_CSS, nav_tag
 
 
 def _to_path(x: str | Path) -> Path:
@@ -111,7 +111,7 @@ def _llm_pairwise(
 
 
 def build_demo():
-    with gr.Blocks(css=side_bar, fill_height=True, title="Pipeline (LLM)") as demo:
+    with gr.Blocks(css=SIDEBAR_CSS, fill_height=True, title="Pipeline (LLM)") as demo:
         gr.HTML(nav_tag, visible=True)
         gr.Markdown("## Pipeline — LLM (Extract + NLI in one call)")
         with gr.Row():

@@ -9,7 +9,7 @@ from app.claim_extractor import DEFAULT_SYSTEM_PROMPT, run_claim_extraction
 from app.combine_pairs import demo as combine_demo
 from app.nli_predict import demo as nli_predict_demo
 from app.pipeline_llm import LLM_NLI_SYSTEM_PROMPT, run_llm_nli_file
-from app.settings import nav_tag, side_bar
+from app.settings import SIDEBAR_CSS, nav_tag
 
 
 def _save_json(obj, path: Path) -> Path:
@@ -61,7 +61,7 @@ def _resolve_uploaded_path(file_obj) -> Path:
 
 def build_demo():
     with gr.Blocks(
-        title="Semantic Mismatch · Pipeline", css=side_bar, theme=gr.themes.Soft()
+        title="Semantic Mismatch · Pipeline", css=SIDEBAR_CSS, theme=gr.themes.Soft()
     ) as demo:
         gr.HTML(nav_tag)
         gr.Markdown("## Pipeline")
