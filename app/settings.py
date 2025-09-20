@@ -173,9 +173,13 @@ CUSTOM_JS = """
       }
     }
 
-    // dim others
-    document.querySelectorAll('span.hl:not(.selected)')
-      .forEach(el => el.classList.add('dimmed'));
+    // keep UI dimming consistent for bridge-driven clicks
+    const pair = span.getAttribute('data-pair');
+    document.querySelectorAll('.hl.dimmed').forEach(el => el.classList.remove('dimmed'));
+    document.querySelectorAll(`.hl[data-pair="${pair}"]:not(.selected)`).forEach(el => el.classList.add('dimmed'));
+
+    // align after Gradio re-render
+    if (typeof scheduleAlignByIdx === 'function') scheduleAlignByIdx(120);  
   });
 
   // ---- Bridge clicks from left viewer to hidden Gradio Textbox (#bridge_click) ----

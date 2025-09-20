@@ -90,7 +90,7 @@ EXTRA_CSS = (
   margin-top: 0;
 }
 /* optional: stretch both columns to the same overall height */
-.viewer-wrap { display:flex; gap:16px; align-items:stretch; }  /* was flex-start */
+.viewer-wrap { display:flex; gap:16px; align-items:stretch; }
 
 .anch{ font-size:11px; opacity:.8; margin-left:4px; text-decoration:none; }
 
