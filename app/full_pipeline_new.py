@@ -78,6 +78,19 @@ EXTRA_CSS = (
   border:1px solid #adb5bd; padding:12px; border-radius:12px; background:#fafafa;
   min-height:140px;
 }
+/* make the right column cards use the same vertical spacing as the left */
+.mirror-box{
+  border:1px solid #adb5bd; padding:12px; border-radius:12px; background:#fafafa;
+  min-height:140px;
+  margin:12px 0;
+}
+/* ensure the very first cards start at the same top edge */
+.left-pane  .para-box:first-child,
+.right-pane .mirror-box:first-child {
+  margin-top: 0;
+}
+/* optional: stretch both columns to the same overall height */
+.viewer-wrap { display:flex; gap:16px; align-items:stretch; }  /* was flex-start */
 
 .anch{ font-size:11px; opacity:.8; margin-left:4px; text-decoration:none; }
 
