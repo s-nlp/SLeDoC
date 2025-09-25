@@ -113,14 +113,14 @@ EXTRA_CSS = (
 
 /* reasoning panel — tighter to right pane, bolder, larger text */
 .reason-wrap {
-  margin-top: 2px;                 /* closer to right pane content */
+  margin-top: 4px;                 /* closer to right pane content */
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 .reason-title {
   font-weight: 800;
-  margin: 1px 0 1px;
+  margin: 3px 0 3px;
   font-size: 16px;
 }
 .reason-card {
@@ -159,6 +159,15 @@ EXTRA_CSS = (
 
 /* left column title */
 .left-title{
+  font-weight:700;
+  font-size:14px;
+  color:#334155;
+  margin:4px 4px 10px 4px;
+  opacity:.9;
+}
+
+/* right column title */
+.right-title{
   font-weight:700;
   font-size:14px;
   color:#334155;
@@ -602,97 +611,6 @@ def _render_left(
     return "\n".join(html_parts)
 
 
-def _render_right(
-    blocks: List[Dict[str, Any]],
-    focus: Tuple[int, Optional[int]],
-    contra_terms: Optional[Dict[str, List[str]]] = None,
-    target_right_idx: Optional[int] = None,
-) -> str:
-    """
-    Small right pane:
-      - If focus=(k, None): show all right claims for block k.
-      - If focus=(k, i_left): show only right claims linked to that left claim, colored by their labels.
-        If multiple left claims link to the same right claim with different labels, choose worst.
-    """
-    k, i_left = focus
-    if not (0 <= k < len(blocks)):
-        return '<div class="mirror-box">—</div>'
-
-    b = blocks[k]
-    out2 = b.get("output_2") or []
-    links, _left_color = _link_map_for_pair(b)
-
-    # choose right-side coloring
-    label_for_right: Dict[int, str] = {}
-    severity = {"contradiction": 3, "neutral": 2, "entailment": 1}
-    if i_left is None:
-        # worst label for each right claim across all left links
-        for li, pairs in links.items():
-            for rj, lbl in pairs:
-                if severity.get(lbl, 0) > severity.get(label_for_right.get(rj, ""), 0):
-                    label_for_right[rj] = lbl
-        show_indices = (
-            sorted(label_for_right.keys())
-            if label_for_right
-            else list(range(len(out2)))
-        )
-    else:
-        for rj, lbl in links.get(i_left, []):
-            if severity.get(lbl, 0) > severity.get(label_for_right.get(rj, ""), 0):
-                label_for_right[rj] = lbl
-        show_indices = sorted(label_for_right.keys())
-
-    # collect anchors for addition/neutral right spans
-    anchor_for_right: Dict[int, str] = {}
-    for rr in b.get("nli_results") or []:
-        lblr = str(rr.get("label") or "").lower()
-        if lblr in ("neutral", "addition"):
-            hyp = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
-            anc = rr.get("anchor")
-            if not anc:
-                continue
-            for jj, cc in enumerate(out2):
-                txtj = cc.get("claim") or cc.get("input") or ""
-                if txtj == hyp and jj not in anchor_for_right:
-                    anchor_for_right[jj] = str(anc)
-                    break
-    # build HTML
-    if show_indices:
-        spans = []
-        for j in show_indices:
-            c = out2[j]
-            raw = str(c.get("claim") or c.get("input") or "")
-            if (
-                i_left is not None
-                and target_right_idx is not None
-                and j == target_right_idx
-                and (contra_terms or {}).get("from_span_2")
-            ):
-                txt = _wrap_terms_html(
-                    raw, (contra_terms or {}).get("from_span_2") or []
-                )
-            else:
-                txt = _escape(raw)
-            cls = "hl " + (label_for_right.get(j, "") or "")
-            # add anchor icon + tooltip for addition/neutral
-            anchor_sup = ""
-            if j in anchor_for_right:
-                anchor_sup = f' <sup class="anch" title="anchor: {_escape(anchor_for_right[j])}">🔗</sup>'
-            spans.append(
-                f'<span id="add-R-{k}-{j}" class="{cls}" data-pair="{k}" data-right="{j}">{txt}</span>{anchor_sup}'
-            )
-        body = "<br>".join(spans)
-    else:
-        body = _escape(_text_right(b))
-
-    return f"""
-      <div class="mirror-box">
-        <div class="para-head">Document B — {'matching claims' if i_left is not None else 'aligned paragraph'} (pair {k+1})</div>
-        <div>{body}</div>
-      </div>
-    """
-
-
 REASON_BY_LABEL = {
     "equivalent": "спаны идентичны",
     "entailment": "спаны идентичны",
@@ -827,13 +745,18 @@ def _render_right_col(
 
     hdr = f"Document B — {'matching claims' if i_left is None else 'matching claims for selected span'} (pair {k+1})"
 
+    # Put the explanation panel *inside* the floating box so it moves together
+    reason_inline = _render_reason(blocks, focus)
+
     # Floating container: track + one box with current content
     return f"""
     <div class="right-float-wrap">
+      <div class="left-title">Snippet of text in Document B</div>
       <div id="right_track"></div>
       <div id="float_box" class="mirror-box" data-idx="{k}">
         <div class="para-head">{hdr}</div>
         <div>{body}</div>
+        {reason_inline}
       </div>
     </div>
     """
@@ -1268,6 +1191,11 @@ with gr.Blocks(
                     pair_picker,
                 ],
             )
+
+            def _hide_reason(_):
+                return gr.update(visible=False)
+
+            run_btn.click(_hide_reason, inputs=None, outputs=reason_html)
 
             def _export(p):
                 if not p:

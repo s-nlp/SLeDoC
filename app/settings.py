@@ -426,14 +426,21 @@ CUSTOM_JS = """
 
   // Slide the floating right box to the vertical position of the target left paragraph
   function moveFloatToIdx(idx){
-    const lb   = document.querySelector('#left_pane .para-box[data-idx="' + idx + '"]');
+    const lb    = document.querySelector('#left_pane .para-box[data-idx="' + idx + '"]');
     const float = document.getElementById('float_box');
     const track = document.getElementById('right_track');
-    const L = document.getElementById('left_pane');
+    const L     = document.getElementById('left_pane');
     if (!lb || !float || !track || !L) return false;
 
-    const y = lb.getBoundingClientRect().top - L.getBoundingClientRect().top;
-    float.style.transform = 'translateY(' + Math.max(0, Math.round(y)) + 'px)';
+    // Use offsetTop relative to the left pane to be immune to viewport scroll / reflow jitter
+    let y = 0, node = lb;
+    while (node && node !== L) {
+      y += node.offsetTop || 0;
+      node = node.offsetParent;
+    }
+    y = Math.max(0, Math.round(y));
+
+    float.style.transform = 'translateY(' + y + 'px)';
     return true;
   }
 
