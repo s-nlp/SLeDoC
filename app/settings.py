@@ -211,7 +211,7 @@ CUSTOM_JS = """
   // B) Click on a paragraph card (.para-box[data-idx]) → send "P:<idx>"
   // The Gradio Python callbacks listen to this to re-render right content / reasoning.
   document.addEventListener('click', function (e) {
-    // Click on a highlighted span with mapping metadata
+    // A) Click on a highlighted span with mapping metadata
     const span = e.target.closest('.hl');
     if (span && span.hasAttribute('data-pair') && span.hasAttribute('data-left')) {
       e.stopPropagation();

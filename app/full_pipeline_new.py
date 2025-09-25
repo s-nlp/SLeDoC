@@ -115,9 +115,28 @@ EXTRA_CSS = (
 #right_pane { position: static; max-height: unset; overflow: visible; }
 
 /* reasoning panel */
-.reason-wrap { margin-top:8px; display:flex; flex-direction:column; gap:8px; }
-.reason-title { font-weight:700; margin:8px 0 4px; }
-.reason-card { border:1px dashed #cbd5e1; background:#fff; padding:8px 10px; border-radius:10px; font-size:14px; }
+/* reasoning panel — tighter to right pane, bolder, larger text */
+.reason-wrap { 
+  margin-top: 4px;                 /* closer to right pane content */
+  display: flex; 
+  flex-direction: column; 
+  gap: 8px; 
+}
+.reason-title { 
+  font-weight: 800; 
+  margin: 3px 0 3px; 
+  font-size: 16px; 
+}
+.reason-card { 
+  border: 2px solid #334155;       /* solid, visible */
+  background: #ffffff; 
+  padding: 10px 12px; 
+  border-radius: 12px; 
+  font-size: 16px;                 /* bigger text */
+  font-weight: 600;                /* bold content */
+  box-shadow: 0 2px 6px rgba(0,0,0,.06);
+}
+
 
 /* contradiction focus box */
 .contra-box { margin-top:10px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fafafa }
@@ -356,6 +375,55 @@ def _get_contra_terms(
         result = _fallback_contra_terms(left, right)
     _CONTRA_CACHE[key] = result
     return result
+
+
+def _get_precomputed_contra(pairs, k: int, i_left: int):
+    """Return cached {'terms': [...], 'right_idx': j} for given left span if available."""
+    if not pairs or k is None or i_left is None:
+        return None
+    b = pairs[k]
+    cache = b.get("_contra_cache") or {}
+    return cache.get(i_left)
+
+
+def _precompute_contra_terms_for_all(pairs, use_llm: bool, model_id: str):
+    """
+    For each block and each left claim that has at least one 'contradiction' link,
+    compute contradicting terms once and cache them on the block:
+      block['_contra_cache'][i_left] = { 'terms': {...}, 'right_idx': int }
+    """
+    if not pairs:
+        return pairs
+
+    for k, b in enumerate(pairs):
+        links, _ = _link_map_for_pair(b)
+        out1 = b.get("output_1") or []
+        out2 = b.get("output_2") or []
+        if not links or not out1 or not out2:
+            continue
+
+        cache = b.get("_contra_cache") or {}
+        for i_left, lst in links.items():
+            # find the first contradiction right-idx (or choose best if you prefer)
+            rj = None
+            for ridx, lbl in lst:
+                if str(lbl).lower() == "contradiction":
+                    rj = ridx
+                    break
+            if rj is None:
+                continue
+            if i_left in cache:
+                continue  # already computed
+
+            left = str(out1[i_left].get("claim") or out1[i_left].get("input") or "")
+            right = str(out2[rj].get("claim") or out2[rj].get("input") or "")
+
+            terms = _get_contra_terms(left, right, use_llm=use_llm, model_id=model_id or "gpt-4o-mini")
+            cache[i_left] = {"terms": terms, "right_idx": rj}
+
+        if cache:
+            b["_contra_cache"] = cache
+    return pairs
 
 
 def _compute_contra_terms_for_focus(
@@ -982,19 +1050,20 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o-mini"):
         if v and v.startswith("S:"):
             _t, a, b = v.split(":")
             k, l_ = int(a), int(b)
-            info = _compute_contra_terms_for_focus(
-                ps or [],
-                (k, l_),
-                bool(use_llm_contra),
-                contra_model_id or "gpt-4o-mini",
-            )
+            info = _get_precomputed_contra(ps or [], k, l_)
             if not info:
-                return (
-                    _render_left(ps or []),
-                    _render_right_col(ps or [], (k, l_)),
-                    _render_reason(ps or [], (k, l_)),
-                    gr.update(value=str(k + 1)),
+                info = _compute_contra_terms_for_focus(
+                    ps or [],
+                    (k, l_),
+                    bool(use_llm_contra),
+                    contra_model_id or "gpt-4o-mini",
                 )
+                # store back into cache so subsequent clicks are instant & stable
+                if info:
+                    block = (ps or [])[k]
+                    cache = block.get("_contra_cache") or {}
+                    cache[l_] = info
+                    block["_contra_cache"] = cache
             terms = info["terms"]
             rj = info["right_idx"]
             return (
