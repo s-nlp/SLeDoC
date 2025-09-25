@@ -48,12 +48,16 @@ EXTRA_CSS = (
 #viewer_row { align-items: stretch; }
 #left_pane, #right_pane { display: block; }
 
-/* paragraph card */
+/* paragraph card: compact, borderless, lightly indented with spacing */
 .para-box{
-  border:1px solid #adb5bd; padding:12px; border-radius:12px;
-  margin:12px 0; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.05);
+  border: 0;
+  padding: 4px 0 10px 8px;      /* small left indent + breathing room */
+  margin: 12px 0;               /* visible separation between paragraphs */
+  background: transparent;      /* no box background */
+  box-shadow: none;             /* no shadow */
 }
-.para-head { font-size:12px; color:#667085; margin-bottom:6px; }
+.para-head { display:none; }    /* hide the "Document A — paragraph N" header */
+.para-inner { line-height: 1.45; }
 
 /* claim spans */
 .hl{ position:relative; padding:0 3px; border-radius:5px; cursor:pointer; }
@@ -508,11 +512,10 @@ def _render_left(
             inner = _escape(_text_left(b))
 
         html_parts.append(
-            f"""
-          <div class="para-box" data-idx="{pi}">
-            <div class="para-head">Document A — paragraph {pi+1}</div>
-            <div>{inner}</div>
-          </div>
+        f"""
+            <div class="para-box para-compact" data-idx="{pi}">
+                <div class="para-inner">{inner}</div>
+            </div>
         """
         )
 
