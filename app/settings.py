@@ -102,26 +102,32 @@ margin:12px 0; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.05);
 # All the custom JS for interactivity and alignment
 CUSTOM_JS = """
 () => {
+  // Small helper to find optional confidence UI label
   const confBox = () => document.getElementById('conf_box');
 
+  // Temporarily highlight an element by ID (used for hover-in)
+  // Stores the original background color in data._bg on first hover so we can restore it later.
   const hi = (id, col) => {
     const e = document.getElementById(id);
     if (!e) return;
-    if (e.classList.contains('selected')) return; // keep selected color
+    if (e.classList.contains('selected')) return; // don't override a locked selection
     if (!('_bg' in e.dataset)) e.dataset._bg = e.style.backgroundColor || '';
     e.style.backgroundColor = col || e.style.backgroundColor;
     e.style.outline = '2px solid #000';
   };
 
+  // Revert highlight on an element by ID (used for hover-out)
+  // Restores original background color and outline from the cached value.
   const bye = (id) => {
     const e = document.getElementById(id);
     if (!e) return;
-    if (e.classList.contains('selected')) return; // keep selected color
+    if (e.classList.contains('selected')) return; // keep locked selection intact
     const bg = ('_bg' in e.dataset) ? e.dataset._bg : '';
     e.style.backgroundColor = bg || '';
     e.style.outline = '';
   };
 
+  // Clear all visual selections/dimming + optional confidence readout
   const clearSelection = () => {
     document.querySelectorAll('span.hl.selected, span.hl.dimmed')
       .forEach(el => { el.classList.remove('selected','dimmed'); });
@@ -133,6 +139,7 @@ CUSTOM_JS = """
     if (confBox()) confBox().textContent = 'Confidence: -';
   };
 
+  // Hover-in: highlight current span and its counterpart; update confidence label if present
   document.addEventListener('mouseover', ev => {
     const s = ev.target.closest('span.hl');
     if (s) {
@@ -144,6 +151,7 @@ CUSTOM_JS = """
     }
   });
 
+  // Hover-out: remove temporary highlight on current span and its counterpart
   document.addEventListener('mouseout', ev => {
     const s = ev.target.closest('span.hl');
     if (s) {
@@ -153,27 +161,30 @@ CUSTOM_JS = """
     }
   });
 
-  // click = lock selection with the same (green/red/blue) color
+  // Click on any .hl span()
+  // 1) Clear previous selection
+  // 2) Lock selection on the clicked span (+ counterpart if exists)
+  // 3) Dim other spans in the same pair (for visual focus)
   document.addEventListener('click', ev => {
     const span = ev.target.closest('span.hl');
     if (!span) {
-      // clicked outside any span ⇒ clear selection
+      // Clicked outside spans: clear selection
       clearSelection();
       return;
     }
 
-    // clicked on a span ⇒ reset previous, then select this pair
+    // Reset old selection, then apply a new one
     clearSelection();
 
     const targetId = span.dataset.target;
     const col = span.dataset.hcolor || '';
 
-    // select clicked
+    // Mark clicked span as selected
     span.classList.add('selected');
     span.style.backgroundColor = col;
     span.style.outline = '2px solid #000';
 
-    // select counterpart if exists
+    // Select counterpart if exists
     if (targetId) {
       const mate = document.getElementById(targetId);
       if (mate) {
@@ -184,20 +195,21 @@ CUSTOM_JS = """
       }
     }
 
-    // keep UI dimming consistent for bridge-driven clicks
+    // Dim all non-selected spans from the same pair index
     const pair = span.getAttribute('data-pair');
     document.querySelectorAll('.hl.dimmed').forEach(el => el.classList.remove('dimmed'));
     document.querySelectorAll(`.hl[data-pair="${pair}"]:not(.selected)`).forEach(el => el.classList.add('dimmed'));
-
-    // align after Gradio re-render
-    if (typeof scheduleAlignByIdx === 'function') scheduleAlignByIdx(120);
   });
 
-  // ---- Bridge clicks from left viewer to hidden Gradio Textbox (#bridge_click) ----
+  // Bridge clicks from left viewer to hidden Gradio Textbox (#bridge_click)
   const findBridgeBox = () =>
     document.querySelector('#bridge_click textarea') ||
     document.querySelector('#bridge_click input');
 
+  // Universal click bridge:
+  // A) Click on a LEFT span (.hl with data-pair + data-left) → send "S:<pair>:<left>"
+  // B) Click on a paragraph card (.para-box[data-idx]) → send "P:<idx>"
+  // The Gradio Python callbacks listen to this to re-render right content / reasoning.
   document.addEventListener('click', function (e) {
     // Click on a highlighted span with mapping metadata
     const span = e.target.closest('.hl');
@@ -215,25 +227,27 @@ CUSTOM_JS = """
         box.dispatchEvent(new Event('input',  { bubbles: true }));
         box.dispatchEvent(new Event('change', { bubbles: true }));
       }
-      return;
+      return; // don’t allow this click to fall through to paragraph handler
     }
 
-    // Click on a paragraph box (card)
+    // B) Paragraph click (left side)
     const para = e.target.closest('.para-box');
     if (para && para.hasAttribute('data-idx')) {
       const idx = para.getAttribute('data-idx');
       const box = findBridgeBox();
       if (box) {
-        box.value = "P:" + idx;
+        box.value = "P:" + idx;               // signal: focus = (pair, None)
         box.dispatchEvent(new Event('input',  { bubbles: true }));
         box.dispatchEvent(new Event('change', { bubbles: true }));
       }
-      // Schedule alignment to the same row after Gradio re-renders
+      // After Python re-renders, align/slide the right floating panel
       setTimeout(function(){ scheduleAlign(idx); }, 60);
     }
   }, true);
 
-  // ===================== ROW ALIGNMENT (merged safely) ======================
+  // (LEGACY) ROW ALIGNMENT HELPERS
+  // alignPair / alignAll / alignRightToLeftByIdx are kept for backward compatibility
+  // when you render one right card per left paragraph (non-floating mode).
   function alignPair(idx){
     var L = document.querySelector('#left_pane .para-box[data-idx="' + idx + '"]');
     var R = document.querySelector('#right_pane .mirror-box[data-idx="' + idx + '"]');
@@ -258,7 +272,7 @@ CUSTOM_JS = """
     }
   }
 
-  // =================== STRICT 1↔1 ROW ALIGNMENT BY data-idx ===================
+  // Strict by-index alignment (legacy) — matches right cards to left cards 1:1
   function alignRightToLeftByIdx() {
     const left = Array.from(document.querySelectorAll('#left_pane .para-box[data-idx]'));
     const right = Array.from(document.querySelectorAll('#right_pane .mirror-box[data-idx]'));
@@ -271,11 +285,11 @@ CUSTOM_JS = """
     const leftByIdx = {};
     left.forEach(lb => { leftByIdx[lb.getAttribute('data-idx')] = lb; });
 
-    // baseline tops (so we work in the same relative coordinate space)
+    // compute relative offset baselines within both columns
     const left0 = left[0].getBoundingClientRect().top;
     const right0 = right[0].getBoundingClientRect().top;
 
-    // for each right box, align to the left with the same data-idx
+    // shift each right box so its top equals the corresponding left box top
     right.forEach(rb => {
       const idx = rb.getAttribute('data-idx');
       const lb  = leftByIdx[idx];
@@ -290,7 +304,7 @@ CUSTOM_JS = """
     });
   }
 
-  // simple throttle to avoid doing too much work during resize/renders
+  // Throttled legacy aligner (used only if floating panel isn't present)
   let _alignTimer = null;
   function scheduleAlignByIdx(delay=80) {
     if (_alignTimer) clearTimeout(_alignTimer);
@@ -301,19 +315,7 @@ CUSTOM_JS = """
     }, delay);
   }
 
-  // run on load, resize, and after your bridge-driven updates
-  window.addEventListener('load', () => scheduleAlignByIdx(250));
-  window.addEventListener('resize', () => scheduleAlignByIdx(50));
-
-  // hook into your existing click logic: after "P:<idx>" bridge update, align
-  document.addEventListener('click', function(e){
-    const para = e.target && e.target.closest ? e.target.closest('.para-box[data-idx]') : null;
-    if (para) {
-      // give Gradio a moment to re-render right column, then align
-      scheduleAlignByIdx(120);
-    }
-  }, true);
-
+  // Equalize total heights of left/right panes (cosmetic)
   function equalizePaneHeights() {
     const L = document.getElementById('left_pane');
     const R = document.getElementById('right_pane');
@@ -330,12 +332,66 @@ CUSTOM_JS = """
     R.style.minHeight = h + 'px';
   }
 
+  // Floating Right Panel helpers
+  function leftPane()  { return document.getElementById('left_pane'); }
+  function rightPane() { return document.getElementById('right_pane'); }
+
+  // Main align orchestrator:
+  // If floating box exists → slide it to the clicked paragraph.
+  // Else → fall back to legacy row alignment.
+  function scheduleAlign(idx){
+    var attempts = 0;
+    function tick(){
+      attempts++;
+      syncRightTrackHeight();
+
+      var ok = false;
+      // If we have a floating box, move it. Else, fall back to old per-row alignment.
+      if (document.getElementById('float_box')) {
+        ok = (idx != null) ? moveFloatToIdx(idx) : true;
+      } else {
+        ok = (idx != null) ? alignPair(idx) : (alignAll(), true);  // your legacy functions
+      }
+
+      // Try a few times to wait out DOM re-renders
+      if (attempts < 8 && !ok) {
+        setTimeout(tick, 80);
+      } else if (attempts < 8) {
+        setTimeout(function(){
+          syncRightTrackHeight();
+          if (document.getElementById('float_box') && idx != null) moveFloatToIdx(idx);
+        }, 120);
+      }
+    }
+    setTimeout(tick, 80);
+  }
+
+  // Keep the invisible right track as tall as the left column
+  function syncRightTrackHeight(){
+    const L = leftPane();
+    const track = document.getElementById('right_track');
+    if (L && track) track.style.height = L.scrollHeight + 'px';
+  }
+
+  // Slide the floating right box to the vertical position of the target left paragraph
+  function moveFloatToIdx(idx){
+    const lb   = document.querySelector('#left_pane .para-box[data-idx="' + idx + '"]');
+    const float = document.getElementById('float_box');
+    const track = document.getElementById('right_track');
+    const L = document.getElementById('left_pane');
+    if (!lb || !float || !track || !L) return false;
+
+    const y = lb.getBoundingClientRect().top - L.getBoundingClientRect().top;
+    float.style.transform = 'translateY(' + Math.max(0, Math.round(y)) + 'px)';
+    return true;
+  }
+
   // small scheduler so we run after the DOM has settled
   function scheduleEqualize(delay = 80) {
     setTimeout(equalizePaneHeights, delay);
   }
 
-  // Observe DOM changes inside the panes and re-equalize
+  // Observe dynamic DOM changes inside panes and keep heights in sync
   (function observePanes(){
     const L = document.getElementById('left_pane');
     const R = document.getElementById('right_pane');
@@ -347,28 +403,8 @@ CUSTOM_JS = """
     obs.observe(R, opts);
   })();
 
-
-  function scheduleAlign(idx){
-    // Try a few times to wait for Gradio DOM updates
-    var attempts = 0;
-    function tick(){
-      attempts++;
-      var ok = (idx != null) ? alignPair(idx) : (alignAll(), true);
-      if (attempts < 8 && !ok){
-        setTimeout(tick, 80);
-      } else if (attempts < 8) {
-        // one more pass after content settles
-        setTimeout(function(){ (idx != null) ? alignPair(idx) : alignAll(); }, 120);
-      }
-    }
-    setTimeout(tick, 80);
-  }
-
-  window.addEventListener('load', function(){
-    setTimeout(function(){ scheduleAlign(null); }, 250);
-  });
-  window.addEventListener('resize', function(){
-    scheduleAlign(null);
-  });
+  // Kick off initial alignment and keep it responsive
+  window.addEventListener('load', function(){ setTimeout(function(){ scheduleAlign(null); }, 250); });
+  window.addEventListener('resize', function(){ scheduleAlign(null); });
 }
 """

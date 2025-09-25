@@ -115,7 +115,7 @@ EXTRA_CSS = (
 .reason-title { font-weight:700; margin:8px 0 4px; }
 .reason-card { border:1px dashed #cbd5e1; background:#fff; padding:8px 10px; border-radius:10px; font-size:14px; }
 
-/; contradiction focus box */
+/* contradiction focus box */
 .contra-box { margin-top:10px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fafafa }
 .contra-head { font-weight:600;margin-bottom:6px }
 .contra-row { display:flex;gap:8px;align-items:flex-start;margin:4px 0 }
@@ -124,6 +124,20 @@ EXTRA_CSS = (
 .pill { display:inline-block;padding:2px 8px;border:1px solid #d1d5db;border-radius:9999px;background:white;font-size:12px }
 .contra-src { margin-top:8px;font-size:12px;color:#6b7280;display:grid;gap:2px }
 .src-tag { font-weight:600;color:#4b5563 }
+
+/* Floating right panel */
+#right_pane { position: relative; overflow: visible; }
+.right-float-wrap { position: relative; width: 100%; }
+#right_track { position: relative; height: 0; }  /* JS will sync to left height */
+#float_box {
+  position: absolute; left: 0; right: 0;
+  will-change: transform;
+  transition: transform 220ms ease;
+}
+
+/* Make the left pane feel like a single “big box” of Document A */
+.left-pane { border: 1px solid #e5e7eb; border-radius: 12px; padding: 8px; background: #fff; }
+.left-pane .para-box { margin: 8px 0; }
 """
 )
 
@@ -461,7 +475,7 @@ def _legend_html() -> str:
     )
 
 
-# ----------------------------- Renderers -----------------------------
+# Renderers
 def _render_left(
     blocks: List[Dict[str, Any]],
     focus: Optional[Tuple[int, Optional[int]]] = None,
@@ -487,7 +501,7 @@ def _render_left(
                     txt = _escape(raw)
                 cls = "hl " + (left_color.get(i1, "") or "")
                 spans.append(
-                    f'<span class="{cls}" data-pair="{pi}" data-left="{i1}">{txt}</span>'
+                    f'<span id="L-{pi}-{i1}" class="{cls}" data-pair="{pi}" data-left="{i1}">{txt}</span>'
                 )
             inner = "<br>".join(spans)
         else:
@@ -624,123 +638,124 @@ def _render_right_col(
     target_right_idx: Optional[int] = None,
 ) -> str:
     """
-    Render the entire right column with one .mirror-box per pair, so that we can
-    equalize heights and align vertically with the left column. Only the *focused*
-    pair shows full claims; the rest are lightweight placeholders.
+    Render a single floating right panel (inside a tall track matching left height).
+    The content shows the focused pair's Document B claims. The panel slides via JS.
     """
+    if not blocks:
+        return '<div class="right-float-wrap"><div id="right_track"></div><div id="float_box" class="mirror-box">—</div></div>'
+
     k, i_left = focus
-    html = []
-    for idx, b in enumerate(blocks):
-        hdr = f"Document B — {'matching claims' if i_left is None and idx == k else ('linked to selected claim' if idx == k and i_left is not None else 'matching claims')} (pair {idx+1})"
-        if idx == k:
-            out2 = b.get("output_2") or []
-            links, _left_color = _link_map_for_pair(b)
-            label_for_right: Dict[int, str] = {}
-            severity = {"contradiction": 3, "neutral": 2, "entailment": 1}
-            if i_left is None:
-                for li, pairs in links.items():
-                    for rj, lbl in pairs:
-                        if severity.get(lbl, 0) > severity.get(
-                            label_for_right.get(rj, ""), 0
-                        ):
-                            label_for_right[rj] = lbl
-            else:
-                for rj, lbl in links.get(i_left, []):
-                    if severity.get(lbl, 0) > severity.get(
-                        label_for_right.get(rj, ""), 0
-                    ):
-                        label_for_right[rj] = lbl
+    k = max(0, min(k, len(blocks) - 1))  # clamp
+    b = blocks[k]
 
-            anchor_for_right = {}
-            if i_left is not None:
-                for rj, lbl in links.get(i_left, []):
-                    if lbl == "entailment":
-                        for li, pairs in links.items():
-                            for rr, _ in pairs:
-                                if rr == rj and li != i_left:
-                                    raw_anchor = (b.get("output_1") or [])[li]
-                                    anchor_for_right[rj] = str(
-                                        raw_anchor.get("claim")
-                                        or raw_anchor.get("input")
-                                        or ""
-                                    )
-                                    break
-            if out2:
-                # Build a "best left for each right" map so we can set data-target/hcolor
-                best_for_right: Dict[int, Tuple[int, str]] = {}  # rj -> (li, lbl)
+    out2 = b.get("output_2") or []
+    links, _left_color = _link_map_for_pair(b)
 
-                if i_left is None:
-                    # pick the strongest label per right j over all left i
-                    for li, pairs in links.items():
-                        for rj, lbl in pairs:
-                            prev = best_for_right.get(rj)
-                            if prev is None or severity.get(lbl, 0) > severity.get(
-                                prev[1], 0
-                            ):
-                                best_for_right[rj] = (li, lbl)
-                else:
-                    # restrict to the currently selected left i_left
-                    for rj, lbl in links.get(i_left, []):
-                        prev = best_for_right.get(rj)
-                        if prev is None or severity.get(lbl, 0) > severity.get(
-                            prev[1], 0
-                        ):
-                            best_for_right[rj] = (i_left, lbl)
+    # choose right-side coloring (worst label wins)
+    label_for_right: Dict[int, str] = {}
+    severity = {"contradiction": 3, "neutral": 2, "entailment": 1}
 
-                spans = []
-                for j, c in enumerate(out2):
-                    raw = str(c.get("claim") or c.get("input") or "")
-                    if (
-                        idx == k
-                        and target_right_idx is not None
-                        and j == int(target_right_idx)
-                        and contra_terms
-                    ):
-                        txt = _wrap_terms_html(
-                            raw, (contra_terms or {}).get("from_span_2") or []
-                        )
-                    else:
-                        txt = _escape(raw)
-
-                    # label class for background baseline (CSS), plus hover color via data-hcolor
-                    lbl = label_for_right.get(j, "") or ""
-                    cls = "hl " + lbl
-
-                    # set data-target to the best left counterpart if we have one
-                    li_for_j = best_for_right.get(j)
-                    if li_for_j:
-                        li_idx, lbl_for_j = li_for_j
-                        target_attr = f' data-target="L-{idx}-{li_idx}"'
-                        hcolor_attr = f' data-hcolor="{_hover_color(lbl_for_j)}"'
-                    else:
-                        target_attr = ""
-                        hcolor_attr = f' data-hcolor="{_hover_color(lbl or "neutral")}"'
-
-                    anchor_sup = ""
-                    if j in anchor_for_right:
-                        anchor_sup = f' <sup class="anch" title="anchor: {_escape(anchor_for_right[j])}">🔗</sup>'
-
-                    spans.append(
-                        f'<span id="R-{idx}-{j}" class="{cls}"'
-                        f' data-pair="{idx}" data-right="{j}"{target_attr}{hcolor_attr}>{txt}</span>{anchor_sup}'
-                    )
-
-                body = "<br>".join(spans)
-
-            else:
-                body = _escape(_text_right(b))
-        else:
-            body = '<div class="right-placeholder">—</div>'
-
-        html.append(
-            f"""
-          <div class="mirror-box" data-idx="{idx}" id="right-pair-{idx}">
-            <div class="para-head">{hdr}</div>
-            <div>{body}</div>
-          </div>
-        """
+    if i_left is None:
+        for li, pairs in links.items():
+            for rj, lbl in pairs:
+                if severity.get(lbl, 0) > severity.get(label_for_right.get(rj, ""), 0):
+                    label_for_right[rj] = lbl
+        _ = (
+            sorted(label_for_right.keys())
+            if label_for_right
+            else list(range(len(out2)))
         )
-    return "\n".join(html)
+    else:
+        for rj, lbl in links.get(i_left, []):
+            if severity.get(lbl, 0) > severity.get(label_for_right.get(rj, ""), 0):
+                label_for_right[rj] = lbl
+        _ = sorted(label_for_right.keys())
+
+    # Right-side anchors (for addition/neutral “anchor” display)
+    anchor_for_right: Dict[int, str] = {}
+    for rr in b.get("nli_results") or []:
+        lblr = str(rr.get("label") or "").lower()
+        if lblr in ("neutral", "addition"):
+            hyp = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
+            anc = rr.get("anchor")
+            if not anc:
+                continue
+            for jj, cc in enumerate(out2):
+                txtj = cc.get("claim") or cc.get("input") or ""
+                if txtj and txtj.strip() == hyp.strip():
+                    # Try to find anchor text from left side if we have an index
+                    if "output_1" in b:
+                        raw_anchor = (b.get("output_1") or [])[anc]
+                        anchor_for_right[jj] = str(
+                            raw_anchor.get("claim") or raw_anchor.get("input") or ""
+                        )
+                    break
+
+    # Build best-left mapping to set data-target/hcolor for hover sync
+    best_for_right: Dict[int, Tuple[int, str]] = {}
+    if i_left is None:
+        for li, pairs in links.items():
+            for rj, lbl in pairs:
+                prev = best_for_right.get(rj)
+                if prev is None or severity.get(lbl, 0) > severity.get(prev[1], 0):
+                    best_for_right[rj] = (li, lbl)
+    else:
+        for rj, lbl in links.get(i_left, []):
+            prev = best_for_right.get(rj)
+            if prev is None or severity.get(lbl, 0) > severity.get(prev[1], 0):
+                best_for_right[rj] = (i_left, lbl)
+
+    # Compose spans body
+    if out2:
+        spans = []
+        for j, c in enumerate(out2):
+            raw = str(c.get("claim") or c.get("input") or "")
+            if (
+                target_right_idx is not None
+                and j == int(target_right_idx)
+                and contra_terms
+            ):
+                txt = _wrap_terms_html(
+                    raw, (contra_terms or {}).get("from_span_2") or []
+                )
+            else:
+                txt = _escape(raw)
+
+            lbl = label_for_right.get(j, "") or ""
+            cls = "hl " + lbl
+
+            li_for_j = best_for_right.get(j)
+            if li_for_j:
+                li_idx, lbl_for_j = li_for_j
+                target_attr = f' data-target="L-{k}-{li_idx}"'
+                hcolor_attr = f' data-hcolor="{_hover_color(lbl_for_j)}"'
+            else:
+                target_attr = ""
+                hcolor_attr = f' data-hcolor="{_hover_color(lbl or "neutral")}"'
+
+            anchor_sup = ""
+            if j in anchor_for_right:
+                anchor_sup = f' <sup class="anch" title="anchor: {_escape(anchor_for_right[j])}">🔗</sup>'
+
+            spans.append(
+                f'<span id="R-{k}-{j}" class="{cls}" data-pair="{k}" data-right="{j}"{target_attr}{hcolor_attr}>{txt}</span>{anchor_sup}'
+            )
+        body = "<br>".join(spans)
+    else:
+        body = _escape(_text_right(b))
+
+    hdr = f"Document B — {'matching claims' if i_left is None else 'matching claims for selected span'} (pair {k+1})"
+
+    # Floating container: track + one box with current content
+    return f"""
+    <div class="right-float-wrap">
+      <div id="right_track"></div>
+      <div id="float_box" class="mirror-box" data-idx="{k}">
+        <div class="para-head">{hdr}</div>
+        <div>{body}</div>
+      </div>
+    </div>
+    """
 
 
 def _render_reason(blocks, focus):
