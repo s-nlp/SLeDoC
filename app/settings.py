@@ -1,40 +1,42 @@
 SIDEBAR_CSS = """
 /* Sidebar placed on the left bottom */
 #sidebar{
-    position:fixed;
-    left:0;                       /* stick to left edge */
-    bottom:0;                     /* stick to bottom edge */
-    width:140px;
+    position:fixed;             /* stay in place when scrolling */
+    left:0;                     /* stick to left edge */
+    bottom:0;                   /* stick to bottom edge */
+    width:140px;                /* fixed width of a sidebar */
 
     /* look & feel */
-    background:#202124;
-    color:#fff;
-    padding:12px 8px;
-    box-sizing:border-box;
+    background:#202124;         /* dark gray background */
+    color:#fff;                 /* white text */
+    padding:12px 8px;           /* inner padding */
+    box-sizing:border-box;      /* include padding in width */
 
-    display:flex;
-    flex-direction:column;
-    gap:8px;
+    display:flex;               /* flex container */
+    flex-direction:column;      /* stack items vertically */
+    gap:8px;                    /* space between items */
 }
 
 /* buttons inside the bar */
 #sidebar a{
-    display:block;
-    padding:8px 4px;
-    border-radius:4px;
-    color:#fff;
-    text-decoration:none;
-    text-align:center;
-    background:#3d4043;
-    font-weight:600;
-    font-size:14px;
+    display:block;              /* make links block-level */
+    padding:8px 4px;            /* inner padding */
+    border-radius:4px;          /* rounded corners */
+    color:#fff;                 /* white text */
+    text-decoration:none;       /* no underline */
+    text-align:center;          /* center text */
+    background:#3d4043;         /* slightly lighter bg */
+    font-weight:600;            /* semi-bold text */
+    font-size:14px;             /* slightly larger text */
 }
 #sidebar a:hover{
-    background:#5f6368;
+    background:#5f6368;         /* background of a button when hover */
 }
 
 /* keep main app shifted right so it doesn’t sit under the bar */
-body{ margin-left:140px !important; }
+body {
+  margin-left:140px !important; /* move main content to the reight to not cover with sidebar */
+}
 """
 
 
@@ -58,45 +60,94 @@ nav_tag = """
 # Base visual language used across the app (cards, badges, highlights)
 BASE_CSS = """
 /* Cards for paragraphs */
+/* Styles for paragraph cards: border, padding, rounded corners, margin, white background, subtle shadow */
 .para-box{
-border:1px solid #adb5bd; padding:12px; border-radius:12px;
-margin:12px 0; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.05);
+  border:1px solid #adb5bd;
+  padding:12px;
+  border-radius:12px;
+  margin:12px 0;
+  background:#fff;
+  box-shadow:0 1px 3px rgba(0,0,0,.05);
 }
-.para-head{ font-size:12px; color:#667085; margin-bottom:6px; }
 
+/* Paragraph header: small font, gray color, bottom margin */
+.para-head{
+  font-size:12px;                        /* smaller font size */
+  color:#667085;                         /* gray color */
+  margin-bottom:6px;                     /* space below header */
+}
 
 /* Claim spans */
-.hl{ position:relative; padding:0 3px; border-radius:5px; cursor:pointer; }
-.hl:hover{ outline:1px dashed #888; }
+/* Highlighted claim spans: relative positioning, small horizontal padding, rounded corners, pointer cursor */
+.hl{
+  position:relative;
+  padding:0 3px;
+  border-radius:5px;
+  cursor:pointer;
+}
+/* Dashed outline on hover for claim spans */
+.hl:hover{
+  outline:1px dashed #888;
+}
 
 
 /* NLI palette (soft) */
+/* Background colors for NLI labels: entailment (green), neutral (blue), contradiction (red) */
 .hl.entailment { background: rgba(34,197,94,.18); }
 .hl.neutral { background: rgba(59,130,246,.18); }
 .hl.contradiction { background: rgba(244,63,94,.18); }
 
 
 /* Explicit contradiction terms highlight */
-.contra-term{ background:#fff59a; padding:0 2px; border-radius:4px; }
-
+/* Highlight for contradiction terms: yellow background, small padding, rounded corners */
+.contra-term{
+ background:#fff59a;
+  padding:0 2px;
+  border-radius:4px;
+}
 
 /* Selection and dimming */
-.hl.selected{ outline:2px solid #111; box-shadow:0 0 0 3px rgba(0,0,0,.06) inset; }
-.hl.dimmed{ filter:saturate(.3) brightness(.95); }
-
+/* Selected claim span: solid outline, inner shadow */
+.hl.selected{
+ outline:2px solid #111;
+  box-shadow:0 0 0 3px rgba(0,0,0,.06) inset;
+}
+/* Dimmed claim span: reduced saturation and brightness */
+.hl.dimmed{
+  filter:saturate(.3) brightness(.95);
+}
 
 /* Simple badge */
-.badge{ display:inline-block; padding:2px 6px; border-radius:9999px; font-size:11px; }
-.badge-danger{ background:#fee2e2; color:#b91c1c; }
-.badge-info{ background:#dbeafe; color:#1d4ed8; }
-
+/* Badge styles: inline-block, small padding, fully rounded, small font */
+.badge{
+  display:inline-block;
+  padding:2px 6px;
+  border-radius:9999px;
+  font-size:11px;
+}
+/* Danger badge: light red background, dark red text */
+.badge-danger{
+  background:#fee2e2;
+  color:#b91c1c;
+}
+/* Info badge: light blue background, dark blue text */
+.badge-info{
+  background:#dbeafe;
+  color:#1d4ed8;
+}
 
 /* Hide Gradio’s default block padding around HTML blocks for tighter stacking */
-#left_pane .gr-html, #right_pane .gr-html{ padding:0 !important; }
-
+/* Remove default Gradio padding for HTML blocks in left and right panes */
+#left_pane .gr-html, #right_pane .gr-html{
+  padding:0 !important;
+}
 
 /* Reasoning title */
-#reason_box h3 { margin: 0 0 8px 0; font-weight: 700; }
+/* Reasoning block title: no top margin, bottom margin, bold font */
+#reason_box h3 {
+  margin: 0 0 8px 0;
+  font-weight: 700;
+}
 """
 
 # All the custom JS for interactivity and alignment

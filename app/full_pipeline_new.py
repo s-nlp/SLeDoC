@@ -42,7 +42,6 @@ EXTRA_CSS = (
     + SIDEBAR_CSS
     + """
 /* dual-pane viewer layout */
-.viewer-wrap { display:flex; gap:16px; align-items:flex-start; }
 .left-pane  { flex: 2 1 0; min-width: 420px; }
 .right-pane { flex: 1 1 0; position: static; max-height: 80vh; overflow:auto; }
 #viewer_row { align-items: stretch; }
@@ -67,6 +66,7 @@ EXTRA_CSS = (
 .hl.entailment     { background: rgba(34,197,94,.18); }   /* green */
 .hl.neutral        { background: rgba(59,130,246,.18); }  /* blue */
 .hl.contradiction  { background: rgba(244,63,94,.18); }
+
 /* contradiction term highlight */
 .contra-term{ background: #fff59a; padding:0 2px; border-radius:3px; }
    /* red */
@@ -77,11 +77,6 @@ EXTRA_CSS = (
 /* mute tooltip artifacts */
 .hl::after { display:none !important; }
 
-/* right mirror */
-.mirror-box{
-  border:1px solid #adb5bd; padding:12px; border-radius:12px; background:#fafafa;
-  min-height:140px;
-}
 /* make the right column cards use the same vertical spacing as the left */
 .mirror-box{
   border:1px solid #adb5bd; padding:12px; border-radius:12px; background:#fafafa;
@@ -93,9 +88,11 @@ EXTRA_CSS = (
 .right-pane .mirror-box:first-child {
   margin-top: 0;
 }
+
 /* optional: stretch both columns to the same overall height */
 .viewer-wrap { display:flex; gap:16px; align-items:stretch; }
 
+/* left column title */
 .anch{ font-size:11px; opacity:.8; margin-left:4px; text-decoration:none; }
 
 /* legend + confidence UI */
@@ -114,29 +111,27 @@ EXTRA_CSS = (
 /* right pane: flows with page scroll (no inner scroll, no sticky) */
 #right_pane { position: static; max-height: unset; overflow: visible; }
 
-/* reasoning panel */
 /* reasoning panel — tighter to right pane, bolder, larger text */
-.reason-wrap { 
-  margin-top: 4px;                 /* closer to right pane content */
-  display: flex; 
-  flex-direction: column; 
-  gap: 8px; 
+.reason-wrap {
+  margin-top: 2px;                 /* closer to right pane content */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.reason-title { 
-  font-weight: 800; 
-  margin: 3px 0 3px; 
-  font-size: 16px; 
+.reason-title {
+  font-weight: 800;
+  margin: 1px 0 1px;
+  font-size: 16px;
 }
-.reason-card { 
+.reason-card {
   border: 2px solid #334155;       /* solid, visible */
-  background: #ffffff; 
-  padding: 10px 12px; 
-  border-radius: 12px; 
+  background: #ffffff;
+  padding: 10px 12px;
+  border-radius: 12px;
   font-size: 16px;                 /* bigger text */
   font-weight: 600;                /* bold content */
   box-shadow: 0 2px 6px rgba(0,0,0,.06);
 }
-
 
 /* contradiction focus box */
 .contra-box { margin-top:10px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fafafa }
@@ -161,6 +156,15 @@ EXTRA_CSS = (
 /* Make the left pane feel like a single “big box” of Document A */
 .left-pane { border: 1px solid #e5e7eb; border-radius: 12px; padding: 8px; background: #fff; }
 .left-pane .para-box { margin: 8px 0; }
+
+/* left column title */
+.left-title{
+  font-weight:700;
+  font-size:14px;
+  color:#334155;
+  margin:4px 4px 10px 4px;
+  opacity:.9;
+}
 """
 )
 
@@ -418,7 +422,9 @@ def _precompute_contra_terms_for_all(pairs, use_llm: bool, model_id: str):
             left = str(out1[i_left].get("claim") or out1[i_left].get("input") or "")
             right = str(out2[rj].get("claim") or out2[rj].get("input") or "")
 
-            terms = _get_contra_terms(left, right, use_llm=use_llm, model_id=model_id or "gpt-4o-mini")
+            terms = _get_contra_terms(
+                left, right, use_llm=use_llm, model_id=model_id or "gpt-4o-mini"
+            )
             cache[i_left] = {"terms": terms, "right_idx": rj}
 
         if cache:
@@ -557,8 +563,12 @@ def _render_left(
     Big left pane: for each pair, show Document A claims as spans, colored by worst NLI link.
     If no claims available for a block, fall back to raw paragraph text.
     """
-    # html_parts = ['<div class="viewer-wrap"><div class="left-pane">', _legend_html()]
     html_parts = ['<div class="viewer-wrap"><div class="left-pane">']
+    html_parts = [
+        '<div class="viewer-wrap"><div class="left-pane">',
+        '<div class="left-title">Source text of Document A</div>',
+    ]
+
     for pi, b in enumerate(blocks):
         out1 = b.get("output_1") or []
         links, left_color = _link_map_for_pair(b)
@@ -580,7 +590,7 @@ def _render_left(
             inner = _escape(_text_left(b))
 
         html_parts.append(
-        f"""
+            f"""
             <div class="para-box para-compact" data-idx="{pi}">
                 <div class="para-inner">{inner}</div>
             </div>
@@ -1183,6 +1193,8 @@ with gr.Blocks(
                 win,
                 thr,
                 sys_prompt,
+                use_llm_contra,
+                contra_model,
             ):
                 (align_path, pairs_path, preview, left, right, pairs) = _orchestrate(
                     doc1_f,
@@ -1195,6 +1207,17 @@ with gr.Blocks(
                     float(thr),
                     sys_prompt,
                 )
+                # Precompute contradiction terms once for all blocks so clicks are instant and stable
+                try:
+                    pairs = _precompute_contra_terms_for_all(
+                        pairs,
+                        bool(use_llm_contra),
+                        (contra_model or "gpt-4o-mini"),
+                    )
+                except Exception:
+                    # fail-safe: keep pairs as-is
+                    pass
+
                 # reasoning is empty until a specific span is clicked
                 reason = _render_reason(pairs or [], (0, None))
 
@@ -1204,7 +1227,9 @@ with gr.Blocks(
 
                 return (
                     left,  # left_html
-                    right,  # right_html
+                    _render_right_col(
+                        pairs, (0, None)
+                    ),  # right_html (fresh, uses any precomputed cache)
                     reason,  # reason_html
                     pairs,  # pairs_state
                     align_path,  # align_path_state
@@ -1229,6 +1254,8 @@ with gr.Blocks(
                     window_size,
                     threshold,
                     claim_prompt,
+                    use_llm_contra,
+                    contra_model,
                 ],
                 outputs=[
                     left_html,
