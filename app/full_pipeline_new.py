@@ -592,7 +592,9 @@ def _render_left(
                 best_r = None
                 best_lbl = ""
                 for rj, lbl in links.get(i1, []):
-                    if best_r is None or sev_rank.get(lbl, 0) > sev_rank.get(best_lbl, 0):
+                    if best_r is None or sev_rank.get(lbl, 0) > sev_rank.get(
+                        best_lbl, 0
+                    ):
                         best_r = rj
                         best_lbl = lbl or ""
 
@@ -606,8 +608,14 @@ def _render_left(
                 cls = "hl " + (left_color.get(i1, "") or "")
 
                 # add target/hcolor so left can point to right
-                target_attr = f' data-target="R-{pi}-{best_r}"' if best_r is not None else ""
-                hcolor_attr = f' data-hcolor="{_hover_color(best_lbl)}"' if best_r is not None else ""
+                target_attr = (
+                    f' data-target="R-{pi}-{best_r}"' if best_r is not None else ""
+                )
+                hcolor_attr = (
+                    f' data-hcolor="{_hover_color(best_lbl)}"'
+                    if best_r is not None
+                    else ""
+                )
 
                 spans.append(
                     f'<span id="L-{pi}-{i1}" class="{cls}" data-pair="{pi}" data-left="{i1}"{target_attr}{hcolor_attr}>{txt}</span>'
@@ -1225,12 +1233,6 @@ with gr.Blocks(
                 _on_pick,
                 inputs=[pairs_state, pair_picker],
                 outputs=[left_html, right_html, reason_html],
-            )
-            # connect bridge
-            bridge_click.change(
-                _bridge_update,
-                inputs=[pairs_state, bridge_click],
-                outputs=[left_html, right_html, reason_html, pair_picker],
             )
             # react to `input` events (what JS emits)
             bridge_click.input(
