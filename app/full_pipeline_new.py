@@ -581,16 +581,36 @@ def _render_left(
         links, left_color = _link_map_for_pair(b)
 
         if out1:
+            # severity order
+            sev_rank = {"contradiction": 3, "neutral": 2, "entailment": 1}
+
             spans = []
             for i1, c in enumerate(out1):
                 raw = str(c.get("claim") or c.get("input") or "")
+
+                # choose best right idx by severity for this left i1 (if any)
+                best_r = None
+                best_lbl = ""
+                for rj, lbl in links.get(i1, []):
+                    if best_r is None or sev_rank.get(lbl, 0) > sev_rank.get(best_lbl, 0):
+                        best_r = rj
+                        best_lbl = lbl or ""
+
+                # term highlighting if this left is focused
                 if focus and focus[0] == pi and focus[1] == i1 and contra_terms:
-                    txt = _wrap_terms_html(raw, contra_terms.get("from_span_1") or [])
+                    txt = _wrap_terms_html(raw, (contra_terms.get("from_span_1") or []))
                 else:
                     txt = _escape(raw)
+
+                # NLI color for the left span (worst label among its links)
                 cls = "hl " + (left_color.get(i1, "") or "")
+
+                # add target/hcolor so left can point to right
+                target_attr = f' data-target="R-{pi}-{best_r}"' if best_r is not None else ""
+                hcolor_attr = f' data-hcolor="{_hover_color(best_lbl)}"' if best_r is not None else ""
+
                 spans.append(
-                    f'<span id="L-{pi}-{i1}" class="{cls}" data-pair="{pi}" data-left="{i1}">{txt}</span>'
+                    f'<span id="L-{pi}-{i1}" class="{cls}" data-pair="{pi}" data-left="{i1}"{target_attr}{hcolor_attr}>{txt}</span>'
                 )
             inner = "<br>".join(spans)
         else:
