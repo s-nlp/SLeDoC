@@ -430,7 +430,7 @@ def _precompute_contra_terms_for_all(pairs, use_llm: bool, model_id: str):
             right = str(out2[rj].get("claim") or out2[rj].get("input") or "")
 
             terms = _get_contra_terms(
-                left, right, use_llm=use_llm, model_id=model_id or "gpt-4o-mini"
+                left, right, use_llm=use_llm, model_id=model_id or "gpt-4o"
             )
             cache[i_left] = {"terms": terms, "right_idx": rj}
 
@@ -468,7 +468,7 @@ def _compute_contra_terms_for_focus(
     left = str(out1[i_left].get("claim") or out1[i_left].get("input") or "")
     right = str(out2[rj].get("claim") or out2[rj].get("input") or "")
     terms = _get_contra_terms(
-        left, right, use_llm=use_llm, model_id=model_id or "gpt-4o-mini"
+        left, right, use_llm=use_llm, model_id=model_id or "gpt-4o"
     )
     return {"terms": terms, "right_idx": rj}
 
@@ -995,7 +995,7 @@ def _bridge_update(pairs: List[Dict[str, Any]], bridge_value: str):
     )
 
 
-def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o-mini"):
+def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
     k, l_ = 0, None
     try:
         if v and v.startswith("P:"):
@@ -1015,7 +1015,7 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o-mini"):
                     ps or [],
                     (k, l_),
                     bool(use_llm_contra),
-                    contra_model_id or "gpt-4o-mini",
+                    contra_model_id or "gpt-4o",
                 )
                 # store back into cache so subsequent clicks are instant & stable
                 if info:
@@ -1062,7 +1062,7 @@ with gr.Blocks(
                         value=True, label="Use combined Extract+NLI (LLM)"
                     )
                     llm_model = gr.Textbox(
-                        value="gpt-4o-mini", label="LLM model (for combined 1+2)"
+                        value="gpt-4o", label="LLM model (for combined 1+2)"
                     )
                 with gr.Row():
                     nli_model = gr.Dropdown(
@@ -1094,7 +1094,7 @@ with gr.Blocks(
                         value=True, label="Use LLM to extract contradicting terms"
                     )
                     contra_model = gr.Textbox(
-                        value="gpt-4o-mini", label="Model for term extraction", scale=2
+                        value="gpt-4o", label="Model for term extraction", scale=2
                     )
                 with gr.Row():
                     artifacts_json = gr.JSON(label="Artifacts", visible=False)
@@ -1161,7 +1161,7 @@ with gr.Blocks(
                     pairs = _precompute_contra_terms_for_all(
                         pairs,
                         bool(use_llm_contra),
-                        (contra_model or "gpt-4o-mini"),
+                        (contra_model or "gpt-4o"),
                     )
                 except Exception:
                     # fail-safe: keep pairs as-is
