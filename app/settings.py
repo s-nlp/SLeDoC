@@ -143,36 +143,51 @@ BASE_CSS = """
 # All the custom JS for interactivity and alignment
 CUSTOM_JS = """
 () => {
-  // Small helper to find optional confidence UI label
-  const confBox = () => document.getElementById('conf_box');
+  /* =========================
+     Helpers for Shadow DOM
+     ========================= */
+  const appEl  = () => document.querySelector("gradio-app");
+  const root   = () => (appEl() && appEl().shadowRoot) ? appEl().shadowRoot : document;
+  const q      = (sel) => root().querySelector(sel);
+  const qa     = (sel) => root().querySelectorAll(sel);
 
-  // Temporarily highlight an element by ID (used for hover-in)
-  // Stores the original background color in data._bg on first hover so we can restore it later.
+  /* Optional: keep selected paragraph near viewport middle */
+  const CENTER_ON_MOVE = false;
+  function centerViewportOnLeft(idx){
+    try{
+      const L  = q('#left_pane');
+      const lb = q(`#left_pane .para-box[data-idx="${idx}"]`);
+      if (!L || !lb) return;
+      const r = lb.getBoundingClientRect();
+      const delta = (r.top + r.height/2) - (window.innerHeight/2);
+      window.scrollBy({ top: delta, behavior: 'smooth' });
+    }catch(_){}
+  }
+
+  /* ============ Visual helpers ============ */
+  const confBox = () => q('#conf_box');
+
   const hi = (id, col) => {
-    const e = document.getElementById(id);
+    const e = q('#' + CSS.escape(id));
     if (!e) return;
-    if (e.classList.contains('selected')) return; // don't override a locked selection
+    if (e.classList.contains('selected')) return;
     if (!('_bg' in e.dataset)) e.dataset._bg = e.style.backgroundColor || '';
     e.style.backgroundColor = col || e.style.backgroundColor;
     e.style.outline = '2px solid #000';
   };
 
-  // Revert highlight on an element by ID (used for hover-out)
-  // Restores original background color and outline from the cached value.
   const bye = (id) => {
-    const e = document.getElementById(id);
+    const e = q('#' + CSS.escape(id));
     if (!e) return;
-    if (e.classList.contains('selected')) return; // keep locked selection intact
+    if (e.classList.contains('selected')) return;
     const bg = ('_bg' in e.dataset) ? e.dataset._bg : '';
     e.style.backgroundColor = bg || '';
     e.style.outline = '';
   };
 
-  // Clear all visual selections/dimming + optional confidence readout
   const clearSelection = () => {
-    document.querySelectorAll('span.hl.selected, span.hl.dimmed')
-      .forEach(el => { el.classList.remove('selected','dimmed'); });
-    document.querySelectorAll('span.hl').forEach(el => {
+    qa('span.hl.selected, span.hl.dimmed').forEach(el => el.classList.remove('selected','dimmed'));
+    qa('span.hl').forEach(el => {
       const bg = ('_bg' in el.dataset) ? el.dataset._bg : '';
       el.style.backgroundColor = bg || '';
       el.style.outline = '';
@@ -180,105 +195,75 @@ CUSTOM_JS = """
     if (confBox()) confBox().textContent = 'Confidence: -';
   };
 
-  // Bridge clicks from left viewer to hidden Gradio Textbox (#bridge_click)
-  const findBridgeBox = () =>
-    document.querySelector('#bridge_click textarea') ||
-    document.querySelector('#bridge_click input');
+  /* ============ Bridge to Python ============ */
+  function findBridgeBox(){
+    // Works for both single-line <input> and multiline <textarea>
+    return q('#bridge_click textarea, #bridge_click input');
+  }
+  function sendBridge(val){
+    const box = findBridgeBox();
+    if (!box) return false;
+    box.value = val;
+    // Gradio listens to the "input" event; make it composed so it crosses Shadow DOM.
+    box.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }));
+    return true;
+  }
 
-  // Floating Right Panel helpers
-  function leftPane()  { return document.getElementById('left_pane'); }
-  function rightPane() { return document.getElementById('right_pane'); }
+  /* ============ Floating right panel alignment ============ */
+  function leftPane()  { return q('#left_pane'); }
+  function rightPane() { return q('#right_pane'); }
 
-  // Slide the floating right box to the vertical position of the target left paragraph
   function moveFloatToIdx(idx){
-    const lb    = document.querySelector('#left_pane .para-box[data-idx="' + idx + '"]');
-    const float = document.getElementById('float_box');
-    const track = document.getElementById('right_track');
-    const L     = document.getElementById('left_pane');
+    const lb    = q(`#left_pane .para-box[data-idx="${idx}"]`);
+    const float = q('#float_box');
+    const track = q('#right_track');
+    const L     = leftPane();
     if (!lb || !float || !track || !L) return false;
 
-    // Use offsetTop relative to the left pane to be immune to viewport scroll / reflow jitter
+    // Compute offset relative to left pane (immune to viewport scroll).
     let y = 0, node = lb;
     while (node && node !== L) {
       y += node.offsetTop || 0;
       node = node.offsetParent;
     }
     y = Math.max(0, Math.round(y));
-
-    float.style.transform = 'translateY(' + y + 'px)';
+    float.style.transform = `translateY(${y}px)`;
     return true;
   }
 
-  // Equalize total heights of left/right panes (cosmetic)
-  function equalizePaneHeights() {
-    const L = document.getElementById('left_pane');
-    const R = document.getElementById('right_pane');
-    if (!L || !R) return;
-
-    // clear previous min-heights so we measure natural sizes
-    L.style.minHeight = '';
-    R.style.minHeight = '';
-
-    // Use offsetHeight (layouted height); scrollHeight also works if content overflows
-    const h = Math.max(L.offsetHeight, R.offsetHeight);
-    // apply the same min-height to both
-    L.style.minHeight = h + 'px';
-    R.style.minHeight = h + 'px';
-  }
-
-  // small scheduler so we run after the DOM has settled
-  function scheduleEqualize(delay = 80) {
-    setTimeout(equalizePaneHeights, delay);
-  }
-
-  // Main align orchestrator:
-  // If floating box exists → slide it to the clicked paragraph.
-  function scheduleAlign(idx){
-    var attempts = 0;
-    function tick(){
-      attempts++;
-      syncRightTrackHeight();
-
-      var ok = false;
-      // If we have a floating box, move it
-      if (document.getElementById('float_box')) {
-        ok = (idx != null) ? moveFloatToIdx(idx) : true;
-      }
-
-      // Try a few times to wait out DOM re-renders
-      if (attempts < 8 && !ok) {
-        setTimeout(tick, 80);
-      } else if (attempts < 8) {
-        setTimeout(function(){
-          syncRightTrackHeight();
-          if (document.getElementById('float_box') && idx != null) moveFloatToIdx(idx);
-        }, 120);
-      }
-    }
-    setTimeout(tick, 80);
-  }
-
-  // Keep the invisible right track as tall as the left column
   function syncRightTrackHeight(){
     const L = leftPane();
-    const track = document.getElementById('right_track');
+    const track = q('#right_track');
     if (L && track) track.style.height = L.scrollHeight + 'px';
   }
 
-  // Observe dynamic DOM changes inside panes and keep heights in sync
+  function scheduleAlign(idx){
+    let tries = 0;
+    const tick = () => {
+      tries++;
+      syncRightTrackHeight();
+      const hasFloat = !!q('#float_box');
+      const ok = hasFloat ? (idx != null ? moveFloatToIdx(idx) : true) : false;
+      if (tries < 10 && !ok) setTimeout(tick, 90);
+    };
+    // Let Gradio finish re-rendering this turn, then align.
+    requestAnimationFrame(() => setTimeout(tick, 60));
+  }
+
+  /* Keep pane heights in sync as DOM changes */
   (function observePanes(){
-    const L = document.getElementById('left_pane');
-    const R = document.getElementById('right_pane');
+    const L = leftPane();
+    const R = rightPane();
     if (!L || !R || !('MutationObserver' in window)) return;
-    const obs = new MutationObserver(() => scheduleEqualize(40));
-    const opts = { childList: true, subtree: true, characterData: true };
-    obs.observe(L, opts);
-    obs.observe(R, opts);
+    const obs = new MutationObserver(() => setTimeout(syncRightTrackHeight, 50));
+    obs.observe(L, { childList: true, subtree: true, characterData: true });
+    obs.observe(R, { childList: true, subtree: true, characterData: true });
   })();
 
-  // Hover-in: highlight current span and its counterpart; update confidence label if present
-  document.addEventListener('mouseover', ev => {
-    const s = ev.target.closest('span.hl');
+  /* ============ Hover feedback ============ */
+  root().addEventListener('mouseover', ev => {
+    const t = (ev.composedPath && ev.composedPath()[0]) || ev.target;
+    const s = t && t.closest ? t.closest('span.hl') : null;
     if (s) {
       const tgt = s.dataset.target || '';
       hi(s.id, s.dataset.hcolor || '');
@@ -286,99 +271,73 @@ CUSTOM_JS = """
       const c = parseFloat(s.dataset.conf || '');
       if (confBox()) confBox().textContent = 'Confidence: ' + (isNaN(c) ? '-' : c.toFixed(3));
     }
-  });
+  }, {capture:true});
 
-  // Hover-out: remove temporary highlight on current span and its counterpart
-  document.addEventListener('mouseout', ev => {
-    const s = ev.target.closest('span.hl');
+  root().addEventListener('mouseout', ev => {
+    const t = (ev.composedPath && ev.composedPath()[0]) || ev.target;
+    const s = t && t.closest ? t.closest('span.hl') : null;
     if (s) {
       const tgt = s.dataset.target || '';
       bye(s.id);
       if (tgt) bye(tgt);
     }
-  });
+  }, {capture:true});
 
-  // Click on any .hl span()
-  // 1) Clear previous selection
-  // 2) Lock selection on the clicked span (+ counterpart if exists)
-  // 3) Dim other spans in the same pair (for visual focus)
-  document.addEventListener('click', ev => {
-    const span = ev.target.closest('span.hl');
-    if (!span) {
-      // Clicked outside spans: clear selection
+  /* ============ Click handling (UNIVERSAL BRIDGE) ============ */
+  root().addEventListener('click', function (e) {
+    // Prefer the original node inside Shadow DOM
+    const path = e.composedPath ? e.composedPath() : [e.target];
+    let target = null;
+    for (const n of path) {
+      if (n instanceof Element && n.matches && (n.matches('.hl') || n.matches('.para-box'))) {
+        target = n; break;
+      }
+    }
+
+    // A) Click on a highlighted span with mapping metadata
+    const span = target && target.matches('.hl') ? target : null;
+    if (span && span.hasAttribute('data-pair') && span.hasAttribute('data-left')) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Local selection visuals
       clearSelection();
+      span.classList.add('selected');
+      const targetId = span.dataset.target;
+      const col = span.dataset.hcolor || '';
+      span.style.backgroundColor = col;
+      span.style.outline = '2px solid #000';
+      if (targetId) {
+        const mate = q('#' + CSS.escape(targetId));
+        if (mate) {
+          mate.classList.add('selected');
+          mate.style.backgroundColor = mate.dataset.hcolor || col;
+          mate.style.outline = '2px solid #000';
+        }
+      }
+      const pidx = span.getAttribute('data-pair');
+      const lidx = span.getAttribute('data-left');
+
+      if (sendBridge(`S:${pidx}:${lidx}`)) {
+        scheduleAlign(parseInt(pidx, 10));
+        if (CENTER_ON_MOVE) centerViewportOnLeft(pidx);
+      }
       return;
     }
 
-    // Reset old selection, then apply a new one
-    clearSelection();
-
-    const targetId = span.dataset.target;
-    const col = span.dataset.hcolor || '';
-
-    // Mark clicked span as selected
-    span.classList.add('selected');
-    span.style.backgroundColor = col;
-    span.style.outline = '2px solid #000';
-
-    // Select counterpart if exists
-    if (targetId) {
-      const mate = document.getElementById(targetId);
-      if (mate) {
-        mate.classList.add('selected');
-        const mcol = mate.dataset.hcolor || col;
-        mate.style.backgroundColor = mcol;
-        mate.style.outline = '2px solid #000';
-      }
-    }
-
-    // Dim all non-selected spans from the same pair index
-    const pair = span.getAttribute('data-pair');
-    document.querySelectorAll('.hl.dimmed').forEach(el => el.classList.remove('dimmed'));
-    document.querySelectorAll(`.hl[data-pair="${pair}"]:not(.selected)`).forEach(el => el.classList.add('dimmed'));
-  });
-
-  // Universal click bridge:
-  // A) Click on a LEFT span (.hl with data-pair + data-left) → send "S:<pair>:<left>"
-  // B) Click on a paragraph card (.para-box[data-idx]) → send "P:<idx>"
-  // The Gradio Python callbacks listen to this to re-render right content / reasoning.
-  document.addEventListener('click', function (e) {
-    // A) Click on a highlighted span with mapping metadata
-    const span = e.target.closest('.hl');
-    if (span && span.hasAttribute('data-pair') && span.hasAttribute('data-left')) {
-      e.stopPropagation();
-      // local selection highlight
-      document.querySelectorAll('.hl.selected').forEach(el => el.classList.remove('selected'));
-      span.classList.add('selected');
-
-      const pidx = span.getAttribute('data-pair');
-      const lidx = span.getAttribute('data-left');
-      const box = findBridgeBox();
-      if (box) {
-        box.value = "S:" + pidx + ":" + lidx;
-        box.dispatchEvent(new Event('input',  { bubbles: true }));
-        box.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-      return; // don’t allow this click to fall through to paragraph handler
-    }
-
     // B) Paragraph click (left side)
-    const para = e.target.closest('.para-box');
+    const para = target && target.matches('.para-box') ? target : null;
     if (para && para.hasAttribute('data-idx')) {
       const idx = para.getAttribute('data-idx');
-      const box = findBridgeBox();
-      if (box) {
-        box.value = "P:" + idx;               // signal: focus = (pair, None)
-        box.dispatchEvent(new Event('input',  { bubbles: true }));
-        box.dispatchEvent(new Event('change', { bubbles: true }));
+      if (sendBridge(`P:${idx}`)) {
+        scheduleAlign(parseInt(idx, 10));
+        if (CENTER_ON_MOVE) centerViewportOnLeft(idx);
       }
-      // After Python re-renders, align/slide the right floating panel
-      setTimeout(function(){ scheduleAlign(idx); }, 60);
     }
-  }, true);
+  }, {capture:true});
 
-  // Kick off initial alignment and keep it responsive
-  window.addEventListener('load', function(){ setTimeout(function(){ scheduleAlign(null); }, 250); });
-  window.addEventListener('resize', function(){ scheduleAlign(null); });
+  /* Initial alignment + window resize */
+  window.addEventListener('load',  () => setTimeout(() => scheduleAlign(null), 250));
+  window.addEventListener('resize', () => scheduleAlign(null));
 }
 """
