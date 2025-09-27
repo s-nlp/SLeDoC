@@ -146,13 +146,23 @@ EXTRA_CSS = (
 .right-float-wrap { position: relative; width: 100%; }
 #right_track { position: relative; height: 0; }  /* JS will sync to left height */
 #float_box {
-  position: absolute; left: 0; right: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   will-change: transform;
   transition: transform 220ms ease;
 }
 
 /* Make the left pane feel like a single “big box” of Document A */
-.left-pane { border: 1px solid #e5e7eb; border-radius: 12px; padding: 8px; background: #fff; }
+.left-pane {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 8px;
+    background: #fff;
+    max-height: 80vh;       /* left pane its own scroller */
+    overflow-y: auto;
+}
 .left-pane .para-box { margin: 8px 0; }
 
 /* left column title */

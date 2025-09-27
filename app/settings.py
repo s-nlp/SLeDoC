@@ -151,16 +151,25 @@ CUSTOM_JS = """
   const q      = (sel) => root().querySelector(sel);
   const qa     = (sel) => root().querySelectorAll(sel);
 
-  /* Optional: keep selected paragraph near viewport middle */
-  const CENTER_ON_MOVE = false;
+  /* Track the currently focused left paragraph index */
+  const current = { idx: null };
+
+  /* Option: keep selected paragraph centered inside the LEFT pane scroller */
+  const CENTER_ON_MOVE = true;
   function centerViewportOnLeft(idx){
     try{
       const L  = q('#left_pane');
       const lb = q(`#left_pane .para-box[data-idx="${idx}"]`);
       if (!L || !lb) return;
-      const r = lb.getBoundingClientRect();
-      const delta = (r.top + r.height/2) - (window.innerHeight/2);
-      window.scrollBy({ top: delta, behavior: 'smooth' });
+
+      // compute 'y' = offsetTop of lb relative to #left_pane
+      let y = 0, node = lb;
+      while (node && node !== L) {
+        y += node.offsetTop || 0;
+        node = node.offsetParent;
+      }
+      const target = Math.max(0, Math.round(y - (L.clientHeight/2 - lb.offsetHeight/2)));
+      L.scrollTo({ top: target, behavior: 'smooth' });
     }catch(_){}
   }
 
@@ -197,14 +206,12 @@ CUSTOM_JS = """
 
   /* ============ Bridge to Python ============ */
   function findBridgeBox(){
-    // Works for both single-line <input> and multiline <textarea>
     return q('#bridge_click textarea, #bridge_click input');
   }
   function sendBridge(val){
     const box = findBridgeBox();
     if (!box) return false;
     box.value = val;
-    // Gradio listens to the "input" event; make it composed so it crosses Shadow DOM.
     box.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }));
     return true;
   }
@@ -220,7 +227,7 @@ CUSTOM_JS = """
     const L     = leftPane();
     if (!lb || !float || !track || !L) return false;
 
-    // Compute offset relative to left pane (immune to viewport scroll).
+    // offset of lb relative to #left_pane
     let y = 0, node = lb;
     while (node && node !== L) {
       y += node.offsetTop || 0;
@@ -246,11 +253,10 @@ CUSTOM_JS = """
       const ok = hasFloat ? (idx != null ? moveFloatToIdx(idx) : true) : false;
       if (tries < 10 && !ok) setTimeout(tick, 90);
     };
-    // Let Gradio finish re-rendering this turn, then align.
     requestAnimationFrame(() => setTimeout(tick, 60));
   }
 
-  /* Keep pane heights in sync as DOM changes */
+  /* Keep track height in sync as DOM changes */
   (function observePanes(){
     const L = leftPane();
     const R = rightPane();
@@ -258,6 +264,11 @@ CUSTOM_JS = """
     const obs = new MutationObserver(() => setTimeout(syncRightTrackHeight, 50));
     obs.observe(L, { childList: true, subtree: true, characterData: true });
     obs.observe(R, { childList: true, subtree: true, characterData: true });
+
+    // ✅ While user scrolls the LEFT pane, keep the float glued to the selected paragraph
+    L.addEventListener('scroll', () => {
+      if (current.idx != null) moveFloatToIdx(current.idx);
+    }, { passive: true });
   })();
 
   /* ============ Hover feedback ============ */
@@ -285,7 +296,6 @@ CUSTOM_JS = """
 
   /* ============ Click handling (UNIVERSAL BRIDGE) ============ */
   root().addEventListener('click', function (e) {
-    // Prefer the original node inside Shadow DOM
     const path = e.composedPath ? e.composedPath() : [e.target];
     let target = null;
     for (const n of path) {
@@ -294,13 +304,12 @@ CUSTOM_JS = """
       }
     }
 
-    // A) Click on a highlighted span with mapping metadata
+    // A) Click on a highlighted span
     const span = target && target.matches('.hl') ? target : null;
     if (span && span.hasAttribute('data-pair') && span.hasAttribute('data-left')) {
       e.preventDefault();
       e.stopPropagation();
 
-      // Local selection visuals
       clearSelection();
       span.classList.add('selected');
       const targetId = span.dataset.target;
@@ -315,29 +324,31 @@ CUSTOM_JS = """
           mate.style.outline = '2px solid #000';
         }
       }
-      const pidx = span.getAttribute('data-pair');
+      const pidx = parseInt(span.getAttribute('data-pair') || '0', 10);
       const lidx = span.getAttribute('data-left');
 
       if (sendBridge(`S:${pidx}:${lidx}`)) {
-        scheduleAlign(parseInt(pidx, 10));
-        if (CENTER_ON_MOVE) centerViewportOnLeft(pidx);
+        current.idx = pidx;
+        scheduleAlign(current.idx);
+        if (CENTER_ON_MOVE) centerViewportOnLeft(current.idx);
       }
       return;
     }
 
-    // B) Paragraph click (left side)
+    // B) Click on a left paragraph card
     const para = target && target.matches('.para-box') ? target : null;
     if (para && para.hasAttribute('data-idx')) {
-      const idx = para.getAttribute('data-idx');
+      const idx = parseInt(para.getAttribute('data-idx') || '0', 10);
       if (sendBridge(`P:${idx}`)) {
-        scheduleAlign(parseInt(idx, 10));
-        if (CENTER_ON_MOVE) centerViewportOnLeft(idx);
+        current.idx = idx;
+        scheduleAlign(current.idx);
+        if (CENTER_ON_MOVE) centerViewportOnLeft(current.idx);
       }
     }
   }, {capture:true});
 
   /* Initial alignment + window resize */
-  window.addEventListener('load',  () => setTimeout(() => scheduleAlign(null), 250));
-  window.addEventListener('resize', () => scheduleAlign(null));
+  window.addEventListener('load',  () => setTimeout(() => scheduleAlign(current.idx), 250));
+  window.addEventListener('resize', () => scheduleAlign(current.idx));
 }
 """
