@@ -999,14 +999,17 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
     k, l_ = 0, None
     try:
         if v and v.startswith("P:"):
+            # User clicked on a paragraph. Focus on this pair (no claim selected).
             k = int(v.split(":", 1)[1])
             return (
                 _render_left(ps or []),
                 _render_right_col(ps or [], (k, None)),
                 _render_reason(ps or [], (k, None)),
+                # Update radio button to reflect new pair selection
                 gr.update(value=str(k + 1)),
             )
         if v and v.startswith("S:"):
+            # User clicked on a specific claim span. Highlight that claim and matching spans.
             _t, a, b = v.split(":")
             k, l_ = int(a), int(b)
             info = _get_precomputed_contra(ps or [], k, l_)
@@ -1025,12 +1028,17 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                     block["_contra_cache"] = cache
             terms = info["terms"]
             rj = info["right_idx"]
-            return (
-                _render_left(ps or [], (k, l_), terms),
-                _render_right_col(ps or [], (k, l_), terms, rj),
-                _render_reason(ps or [], (k, l_)),
-                gr.update(value=str(k + 1)),
-            )
+        return (
+            _render_left(ps or [], (k, l_), terms),
+            _render_right_col(ps or [], (k, l_), terms, rj),
+            _render_reason(ps or [], (k, l_)),
+            # Do NOT update the radio value here. Simply return an empty update to leave
+            # the radio unchanged. Changing its value or even toggling its interactive
+            # state can cause Gradio to treat it as a change, triggering the default
+            # rendering pipeline and clearing our selection. The empty update leaves
+            # the radio as-is.
+            gr.update(),
+        )
     except Exception:
         pass
     return (
@@ -1229,11 +1237,16 @@ with gr.Blocks(
                 return gr.update(value=p, visible=True)
 
             run_btn.click(_export, inputs=pairs_path_state, outputs=dl_pairs)
-            pair_picker.change(
-                _on_pick,
-                inputs=[pairs_state, pair_picker],
-                outputs=[left_html, right_html, reason_html],
-            )
+            # We no longer bind the radio’s change event to _on_pick. Claim and paragraph
+            # selections are routed via the JS bridge (#bridge_click), which will trigger
+            # the appropriate backend updates. Removing this listener prevents automatic
+            # re-rendering of Document B when the radio value changes (which previously
+            # cleared selections).
+            # pair_picker.change(
+            #     _on_pick,
+            #     inputs=[pairs_state, pair_picker],
+            #     outputs=[left_html, right_html, reason_html],
+            # )
             # react to `input` events (what JS emits)
             bridge_click.input(
                 _bridge_combo,

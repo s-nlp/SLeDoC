@@ -252,47 +252,85 @@ CUSTOM_JS = """
     document.querySelectorAll(`.hl[data-pair="${pair}"]:not(.selected)`).forEach(el => el.classList.add('dimmed'));
   });
 
-  // Bridge clicks from left viewer to hidden Gradio Textbox (#bridge_click)
+  // Bridge clicks from the viewer to hidden Gradio Textbox (#bridge_click)
   const findBridgeBox = () =>
     document.querySelector('#bridge_click textarea') ||
     document.querySelector('#bridge_click input');
 
-  // Universal click bridge:
-  // A) Click on a LEFT span (.hl with data-pair + data-left) → send "S:<pair>:<left>"
-  // B) Click on a paragraph card (.para-box[data-idx]) → send "P:<idx>"
-  // The Gradio Python callbacks listen to this to re-render right content / reasoning.
-  document.addEventListener('click', function (e) {
-    // A) Click on a highlighted span with mapping metadata
-    const span = e.target.closest('.hl');
-    if (span && span.hasAttribute('data-pair') && span.hasAttribute('data-left')) {
-      e.stopPropagation();
-      // local selection highlight
-      document.querySelectorAll('.hl.selected').forEach(el => el.classList.remove('selected'));
-      span.classList.add('selected');
+  // Pending index for alignment. When a click triggers a backend update that will
+  // re-render the right pane, we record the pair index here. Once the DOM
+  // mutation observer fires (indicating new content has been inserted), the
+  // observer will call scheduleAlign on this index to re-sync the floating
+  // panel with the corresponding paragraph. After aligning the value is reset.
+  window._pendingAlignIdx = null;
 
-      const pidx = span.getAttribute('data-pair');
-      const lidx = span.getAttribute('data-left');
-      const box = findBridgeBox();
-      if (box) {
-        box.value = "S:" + pidx + ":" + lidx;
-        box.dispatchEvent(new Event('input',  { bubbles: true }));
-        box.dispatchEvent(new Event('change', { bubbles: true }));
+  /*
+    Universal click bridge:
+
+    - When a user clicks on any highlighted span (.hl), we extract the associated pair
+      and left-index and send a signal to the Gradio backend via the hidden Textbox.
+      This works for both left spans (which carry data-left) and right spans (which
+      have a data-target attribute pointing back to a left span ID like "L-0-2").
+      We no longer stop propagation here so that the general click handler (defined
+      earlier) can handle visual highlighting and dimming.  After dispatching the
+      backend update we schedule an alignment of the floating right panel so it
+      tracks the corresponding paragraph height.
+
+    - When a paragraph card (.para-box) is clicked, we send a "P:<idx>" signal to
+      select that entire pair (focus on paragraph) and schedule the right panel to
+      align with that paragraph.
+  */
+  document.addEventListener('click', function (e) {
+    const span = e.target.closest('.hl');
+    if (span && span.hasAttribute('data-pair')) {
+      // Determine pair index from the span's dataset
+      let pidx = span.getAttribute('data-pair');
+      let lidx = span.getAttribute('data-left');
+
+      // For right-side spans we don't have data-left, but we do have a data-target
+      // attribute of the form "L-<pair>-<left>". Parse it to get the pair and left indexes.
+      if (!lidx && span.dataset.target) {
+        const m = span.dataset.target.match(/L-(\d+)-(\d+)/);
+        if (m) {
+          pidx = m[1];
+          lidx = m[2];
+        }
       }
-      return; // don’t allow this click to fall through to paragraph handler
+
+      // If we have both pair and left index, send an "S:<pair>:<left>" update
+      if (pidx != null && lidx != null) {
+        const box = findBridgeBox();
+        if (box) {
+          // Write into the bridge textbox and dispatch only an 'input' event.  The
+          // additional 'change' event previously dispatched caused Gradio to
+          // interpret the value twice, which resulted in duplicate backend calls
+          // and a second re-render that cleared the right pane.  Emitting
+          // solely the 'input' event avoids this duplicate update.
+          box.value = "S:" + pidx + ":" + lidx;
+          box.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        // Record the pending index so observer can align after DOM updates
+        window._pendingAlignIdx = parseInt(pidx);
+        // Do not stop propagation; let the general click handler update visuals
+        return;
+      }
     }
 
-    // B) Paragraph click (left side)
+    // Paragraph click (left side)
     const para = e.target.closest('.para-box');
     if (para && para.hasAttribute('data-idx')) {
       const idx = para.getAttribute('data-idx');
       const box = findBridgeBox();
       if (box) {
-        box.value = "P:" + idx;               // signal: focus = (pair, None)
-        box.dispatchEvent(new Event('input',  { bubbles: true }));
-        box.dispatchEvent(new Event('change', { bubbles: true }));
+        // signal: focus = (pair, None). Only dispatch the 'input' event to
+        // trigger the backend update once.  Sending a 'change' event here
+        // previously caused the right pane to be redrawn a second time and
+        // effectively removed the selection.  See notes above.
+        box.value = "P:" + idx;
+        box.dispatchEvent(new Event('input', { bubbles: true }));
       }
-      // After Python re-renders, align/slide the right floating panel
-      setTimeout(function(){ scheduleAlign(idx); }, 60);
+      // Record the pending index so observer can align after DOM updates
+      window._pendingAlignIdx = parseInt(idx);
     }
   }, true);
 
@@ -455,7 +493,18 @@ CUSTOM_JS = """
     const R = document.getElementById('right_pane');
     if (!L || !R || !('MutationObserver' in window)) return;
 
-    const obs = new MutationObserver(() => scheduleEqualize(40));
+    const obs = new MutationObserver(() => {
+      // Equalize pane heights (cosmetic)
+      scheduleEqualize(40);
+      // If a click previously recorded a pending pair index, align the floating
+      // panel after new DOM has been inserted. Then clear the flag.
+      if (window._pendingAlignIdx !== null && window._pendingAlignIdx !== undefined) {
+        try {
+          scheduleAlign(window._pendingAlignIdx);
+        } catch (e) {}
+        window._pendingAlignIdx = null;
+      }
+    });
     const opts = { childList: true, subtree: true, characterData: true };
     obs.observe(L, opts);
     obs.observe(R, opts);
