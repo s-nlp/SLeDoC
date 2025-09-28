@@ -267,14 +267,12 @@ CUSTOM_JS = """
       span.classList.add('selected');
 
       const mateId = span.dataset.target;
-      const col    = span.dataset.hcolor || '';
-      span.style.backgroundColor = col;
+      // no fill on select — keep only the box
       span.style.outline = '2px solid #000';
       if (mateId) {
         const mate = q('#' + CSS.escape(mateId));
         if (mate) {
           mate.classList.add('selected');
-          mate.style.backgroundColor = mate.dataset.hcolor || col;
           mate.style.outline = '2px solid #000';
         }
       }
