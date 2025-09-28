@@ -256,8 +256,8 @@ def _wrap_terms_html(text: str, terms: List[str]) -> str:
         gap_stripped = gap.strip()
         # merge if the gap is:
         #   - only whitespace, OR
-        #   - whitespace + exactly one symbol from {',' '.' ':'}
-        if gap and (gap_stripped == "" or re.fullmatch(r"[,.:]", gap_stripped)):
+        #   - whitespace + exactly one symbol
+        if gap and (gap_stripped == "" or re.fullmatch(r"[,.:;!?–—-]", gap_stripped)):
             e0 = e  # include the gap (spaces + the one symbol) inside the marked region
         else:
             merged.append((s0, e0))
@@ -655,6 +655,98 @@ def _hover_color(lbl: str) -> str:
     return PALETTE.get(lbl or "", "#fff3a0")  # default to yellow
 
 
+def _embed_right_claims_in_paragraph(
+    par_text: str,
+    out2: List[Dict[str, Any]],
+    k: int,
+    label_for_right: Dict[int, str],
+    best_for_right: Dict[int, Tuple[int, str]],
+    target_right_idx: Optional[int],
+    contra_terms: Optional[Dict[str, List[str]]],
+) -> str:
+    """
+    Return the FULL Document B paragraph with all right-claims embedded in-place
+    (preserving original order/positions). Each embedded claim keeps the same
+    id/data-* attributes as when rendered as a separate list, so hover/click
+    linking works the same way.
+    """
+    if not par_text:
+        return "—"
+
+    # Build alternation over all claim texts, longest-first to avoid partial overlaps.
+    claims: List[Tuple[int, str]] = []
+    for j, c in enumerate(out2 or []):
+        raw = str(c.get("claim") or c.get("input") or "").strip()
+        if raw:
+            claims.append((j, raw))
+    if not claims:
+        return _escape(par_text)
+    claims.sort(key=lambda t: len(t[1]), reverse=True)
+
+    # Named groups, one per claim index.
+    parts = [f"(?P<G{j}>{re.escape(txt)})" for j, txt in claims]
+    rx = re.compile("|".join(parts), flags=re.IGNORECASE | re.UNICODE)
+
+    used: set[int] = set()  # wrap each claim only once
+    out: List[str] = []
+    last = 0
+    for m in rx.finditer(par_text):
+        s, e = m.span()
+        if s > last:
+            out.append(_escape(par_text[last:s]))
+
+        # Which group matched?
+        j_hit: Optional[int] = None
+        for j, _txt in claims:
+            if m.groupdict().get(f"G{j}") is not None:
+                j_hit = j
+                break
+        seg = m.group(0)
+
+        if j_hit is not None:
+            # label + best mate on the left (to keep cross-hover/selection)
+            lbl = (label_for_right.get(j_hit, "") or "").lower()
+            cls = "hl " + (
+                lbl if lbl in ("contradiction", "neutral", "entailment") else ""
+            )
+
+            li_for_j = best_for_right.get(j_hit)
+            if li_for_j:
+                li_idx, lbl_for_j = li_for_j
+                target_attr = f' data-target="L-{k}-{li_idx}"'
+                hcolor_attr = f' data-hcolor="{_hover_color(lbl_for_j)}"'
+            else:
+                target_attr = ""
+                hcolor_attr = f' data-hcolor="{_hover_color(lbl or "neutral")}"'
+
+            # If this is the specific right claim we're focusing on, inject contradicting terms
+            if (
+                (target_right_idx is not None)
+                and (j_hit == int(target_right_idx))
+                and contra_terms
+            ):
+                inner = _wrap_terms_html(
+                    seg, (contra_terms or {}).get("from_span_2") or []
+                )
+            else:
+                inner = _escape(seg)
+
+            # Only wrap the first occurrence of each claim to avoid duplicates
+            if j_hit in used:
+                out.append(_escape(seg))
+            else:
+                out.append(
+                    f'<span id="R-{k}-{j_hit}" class="{cls}" data-pair="{k}" data-right="{j_hit}"{target_attr}{hcolor_attr}>{inner}</span>'
+                )
+                used.add(j_hit)
+        else:
+            out.append(_escape(seg))
+        last = e
+    if last < len(par_text):
+        out.append(_escape(par_text[last:]))
+    return "".join(out)
+
+
 def _render_right_col(
     blocks: List[Dict[str, Any]],
     focus: Tuple[int, Optional[int]],
@@ -736,49 +828,17 @@ def _render_right_col(
                         )
                     break
 
-    # Build ALL right claims (not filtered)
-    if out2:
-        spans = []
-        for j in range(len(out2)):
-            c = out2[j]
-            raw = str(c.get("claim") or c.get("input") or "")
-
-            # highlight contradicting terms only for the target right claim
-            if (
-                target_right_idx is not None
-                and j == int(target_right_idx)
-                and contra_terms
-            ):
-                txt = _wrap_terms_html(
-                    raw, (contra_terms or {}).get("from_span_2") or []
-                )
-            else:
-                txt = _escape(raw)
-
-            lbl = (label_for_right.get(j, "") or "").lower()
-            cls = "hl " + (
-                lbl if lbl in ("contradiction", "neutral", "entailment") else ""
-            )
-
-            li_for_j = best_for_right.get(j)
-            if li_for_j:
-                li_idx, lbl_for_j = li_for_j
-                target_attr = f' data-target="L-{k}-{li_idx}"'
-                hcolor_attr = f' data-hcolor="{_hover_color(lbl_for_j)}"'
-            else:
-                target_attr = ""
-                hcolor_attr = f' data-hcolor="{_hover_color(lbl or "neutral")}"'
-
-            anchor_sup = ""
-            if j in anchor_for_right:
-                anchor_sup = f' <sup class="anch" title="anchor: {_escape(anchor_for_right[j])}">🔗</sup>'
-
-            spans.append(
-                f'<span id="R-{k}-{j}" class="{cls}" data-pair="{k}" data-right="{j}"{target_attr}{hcolor_attr}>{txt}</span>{anchor_sup}'
-            )
-        claims_body = "<br>".join(spans)
-    else:
-        claims_body = "—"
+    # FULL paragraph of Document B with right-claims embedded in-place (preserve order)
+    paragraph_b = _text_right(b)
+    claims_body = _embed_right_claims_in_paragraph(
+        paragraph_b,
+        out2,
+        k,
+        label_for_right,
+        best_for_right,
+        target_right_idx,
+        (contra_terms or {}),
+    )
 
     hdr = f"Document B — claims (pair {k+1})"
 
@@ -787,7 +847,7 @@ def _render_right_col(
         <div class="right-title">Snippet of text in Document B</div>
         <div class="mirror-box" data-idx="{k}">
           <div class="para-head">{hdr}</div>
-          <div>{claims_body}</div>
+          <div class="para-inner">{claims_body}</div>
         </div>
       </div>
     """
@@ -998,6 +1058,49 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                 _render_reason(ps or [], (k, l_)),
                 gr.update(value=str(k + 1)),
             )
+        if v and v.startswith("R:"):
+            # Click from RIGHT span -> we compute terms for the specific (k, rj)
+            # and choose the "best" left mate for that right span to keep both panes in sync.
+            _t, a, b = v.split(":")
+            k, rj = int(a), int(b)
+            block = (ps or [])[k]
+            out1 = block.get("output_1") or []
+            out2 = block.get("output_2") or []
+            links, _ = _link_map_for_pair(block)
+            severity = {"contradiction": 3, "neutral": 2, "entailment": 1}
+            best_li, best_lbl = None, ""
+            for li, pairs in links.items():
+                for r_idx, lbl in pairs:
+                    if r_idx == rj:
+                        if best_li is None or severity.get(lbl, 0) > severity.get(
+                            best_lbl, 0
+                        ):
+                            best_li, best_lbl = li, lbl
+            if (
+                best_li is None
+                or not (0 <= best_li < len(out1))
+                or not (0 <= rj < len(out2))
+            ):
+                # Fallback: just show the paragraph focus
+                return (
+                    _render_left(ps or []),
+                    _render_right_col(ps or [], (k, None)),
+                    _render_reason(ps or [], (k, None)),
+                    gr.update(value=str(k + 1)),
+                )
+            left_text = str(
+                out1[best_li].get("claim") or out1[best_li].get("input") or ""
+            )
+            right_text = str(out2[rj].get("claim") or out2[rj].get("input") or "")
+            terms = _get_contra_terms(
+                left_text, right_text, bool(use_llm_contra), contra_model_id or "gpt-4o"
+            )
+            return (
+                _render_left(ps or [], (k, best_li), terms),
+                _render_right_col(ps or [], (k, best_li), terms, target_right_idx=rj),
+                _render_reason(ps or [], (k, best_li)),
+                gr.update(value=str(k + 1)),
+            )
     except Exception:
         pass
     return (
@@ -1066,7 +1169,7 @@ with gr.Blocks(
                 with gr.Row():
                     artifacts_json = gr.JSON(label="Artifacts", visible=False)
 
-            run_btn = gr.Button("Run full pipeline", variant="primary")
+            run_btn = gr.Button("Run", variant="primary")
             gr.HTML(_legend_html(), elem_id="viewer_legend")
 
             with gr.Row(elem_id="viewer_row"):
@@ -1098,6 +1201,11 @@ with gr.Blocks(
 
             with gr.Row():
                 dl_pairs = gr.File(label="Download pairs.json", interactive=False)
+                # Labeled spans export (CSV)
+                make_labels_btn = gr.Button("Build labeled spans CSV")
+                dl_labels = gr.DownloadButton(
+                    label="Download labeled_spans.csv", visible=True
+                )
 
             def _run2(
                 doc1_f,
@@ -1191,6 +1299,78 @@ with gr.Blocks(
                 return gr.update(value=p, visible=True)
 
             run_btn.click(_export, inputs=pairs_path_state, outputs=dl_pairs)
+
+            # Build CSV of labeled spans from pairs_state
+            def _build_labeled_spans_csv(pairs):
+                import csv
+                import tempfile
+
+                if not pairs:
+                    return gr.update(visible=False)
+                tmpdir = Path(tempfile.mkdtemp())
+                outp = tmpdir / "labeled_spans.csv"
+                rows = []
+                for k, b in enumerate(pairs or []):
+                    out1 = b.get("output_1") or []
+                    out2 = b.get("output_2") or []
+                    idx1 = _index_claims(out1)
+                    idx2 = _index_claims(out2)
+                    parA = _text_left(b)
+                    parB = _text_right(b)
+                    for r in b.get("nli_results") or []:
+                        prem = str(r.get("premise_raw") or r.get("premise") or "")
+                        hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+                        lbl = str(r.get("label") or "").lower()
+                        expl = str(
+                            r.get("explanation")
+                            or r.get("reason")
+                            or r.get("reasoning")
+                            or ""
+                        )
+                        li = idx1.get(prem)
+                        rj = idx2.get(hyp)
+                        # swapped?
+                        if li is None or rj is None:
+                            li = idx1.get(hyp)
+                            rj = idx2.get(prem)
+                            left_span, right_span = hyp, prem
+                        else:
+                            left_span, right_span = prem, hyp
+                        rows.append(
+                            [
+                                k + 1,  # pair_index (1-based)
+                                li if li is not None else "",  # left_idx
+                                rj if rj is not None else "",  # right_idx
+                                left_span,
+                                right_span,
+                                lbl,
+                                expl,
+                                parA,
+                                parB,
+                            ]
+                        )
+                with outp.open("w", newline="", encoding="utf-8-sig") as f:
+                    wr = csv.writer(f)
+                    wr.writerow(
+                        [
+                            "pair_index",
+                            "left_idx",
+                            "right_idx",
+                            "left_span",
+                            "right_span",
+                            "label",
+                            "explanation",
+                            "paragraph_A",
+                            "paragraph_B",
+                        ]
+                    )
+                    wr.writerows(rows)
+                return str(outp)
+
+            make_labels_btn.click(
+                _build_labeled_spans_csv, inputs=[pairs_state], outputs=dl_labels
+            )
+
             pair_picker.change(
                 _on_pick,
                 inputs=[pairs_state, pair_picker],
