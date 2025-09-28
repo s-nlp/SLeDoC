@@ -287,6 +287,33 @@ CUSTOM_JS = """
       return;
     }
 
+    // C) Click on a highlighted RIGHT span
+    if (span && span.hasAttribute('data-pair') && span.hasAttribute('data-right')) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      clearSelection();
+      span.classList.add('selected');
+      span.style.outline = '2px solid #000';
+
+      const mateId = span.dataset.target; // points to L-k-li
+      if (mateId) {
+        const mate = q('#' + CSS.escape(mateId));
+        if (mate) {
+          mate.classList.add('selected');
+          mate.style.outline = '2px solid #000';
+        }
+      }
+
+      const pidx = parseInt(span.getAttribute('data-pair') || '0', 10);
+      const ridx = span.getAttribute('data-right');
+      if (sendBridge(`R:${pidx}:${ridx}`)) {
+        current.idx = pidx;
+        dimParagraphs(current.idx);
+      }
+      return;
+    }
+
     // B) Click on a LEFT paragraph card (anywhere on the card)
     const para = target && target.matches('.para-box') ? target : null;
     if (para && para.hasAttribute('data-idx')) {

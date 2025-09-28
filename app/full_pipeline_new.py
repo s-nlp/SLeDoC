@@ -1116,7 +1116,7 @@ with gr.Blocks(
     css=EXTRA_CSS, js=CUSTOM_JS, title="Semantic Mismatch — Full Pipeline"
 ) as demo:
     # top nav + title
-    gr.Markdown("## Full pipeline (dual-pane viewer)")
+    gr.Markdown("## DoSeM — Document Semantic Mismatch")
     gr.HTML(nav_tag, visible=True)
 
     with gr.Tabs():
@@ -1167,7 +1167,14 @@ with gr.Blocks(
                         value="gpt-4o", label="Model for term extraction", scale=2
                     )
                 with gr.Row():
-                    artifacts_json = gr.JSON(label="Artifacts", visible=False)
+                    dl_pairs = gr.File(label="Download pairs.json", interactive=False)
+                    # Labeled spans export (CSV)
+                    make_labels_btn = gr.Button("Build labeled spans CSV")
+                    dl_labels = gr.DownloadButton(
+                        label="Download labeled_spans.csv", visible=True
+                    )
+                with gr.Row():
+                    artifacts_json = gr.JSON(label="Artifacts", visible=True)
 
             run_btn = gr.Button("Run", variant="primary")
             gr.HTML(_legend_html(), elem_id="viewer_legend")
@@ -1198,14 +1205,6 @@ with gr.Blocks(
             pairs_state = gr.State([])
             align_path_state = gr.State("")
             pairs_path_state = gr.State("")
-
-            with gr.Row():
-                dl_pairs = gr.File(label="Download pairs.json", interactive=False)
-                # Labeled spans export (CSV)
-                make_labels_btn = gr.Button("Build labeled spans CSV")
-                dl_labels = gr.DownloadButton(
-                    label="Download labeled_spans.csv", visible=True
-                )
 
             def _run2(
                 doc1_f,
