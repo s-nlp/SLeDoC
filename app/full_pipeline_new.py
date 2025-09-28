@@ -132,8 +132,8 @@ EXTRA_CSS = (
   background: #ffffff;
   padding: 10px 12px;
   border-radius: 12px;
-  font-size: 16px;                 /* bigger text */
-  font-weight: 600;                /* bold content */
+  font-size: 14px;                 /* bigger text */
+  font-weight: 500;                /* bold content */
   box-shadow: 0 2px 6px rgba(0,0,0,.06);
 }
 
@@ -179,6 +179,10 @@ EXTRA_CSS = (
 /* Dimming behavior for left pane */
 .left-pane .para-box.para-focus { outline: 2px solid #334155; }
 .left-pane .para-box.para-dim   { opacity: .55; filter: saturate(.6); }
+
+/* top toolbar row: keep everything on one line, nicely aligned */
+#topline_row { align-items: flex-end; gap:12px; }
+#topline_row .gr-accordion { margin: 0; }
 """
 )
 
@@ -1121,62 +1125,73 @@ with gr.Blocks(
 
     with gr.Tabs():
         with gr.Tab("Full pipeline"):
-            with gr.Row():
-                with gr.Column(scale=3):
+            with gr.Row(elem_id="topline_row"):
+                with gr.Column(scale=1):
                     doc1 = gr.File(label="Document A (.docx)", file_types=[".docx"])
+                with gr.Column(scale=1):
                     doc2 = gr.File(label="Document B (.docx)", file_types=[".docx"])
+                with gr.Column(scale=7):
+                    with gr.Accordion("⚙️ Settings", open=False):
+                        with gr.Row():
+                            use_llm_12 = gr.Checkbox(
+                                value=True, label="Use combined Extract+NLI (LLM)"
+                            )
+                            llm_model = gr.Textbox(
+                                value="gpt-4o", label="LLM model (for combined 1+2)"
+                            )
+                        with gr.Row():
+                            nli_model = gr.Dropdown(
+                                label="NLI model (when not using LLM 1+2)",
+                                choices=_list_models(),
+                                value=_list_models()[0] if _list_models() else None,
+                            )
+                            device = gr.Dropdown(
+                                choices=["cpu", "cuda"], value="cpu", label="Device"
+                            )
+                        with gr.Row():
+                            batch_size = gr.Slider(
+                                8, 128, value=64, step=8, label="Batch size (embed)"
+                            )
+                            window_size = gr.Slider(
+                                5, 200, value=50, step=5, label="Window size (align)"
+                            )
+                            threshold = gr.Slider(
+                                0.5,
+                                0.99,
+                                value=0.90,
+                                step=0.01,
+                                label="Similarity threshold",
+                            )
+                        with gr.Row():
+                            claim_prompt = gr.Textbox(
+                                value=LLM_NLI_SYSTEM_PROMPT or DEFAULT_SYSTEM_PROMPT,
+                                lines=8,
+                                label="Claim extraction system prompt",
+                            )
+                        with gr.Row():
+                            use_llm_contra = gr.Checkbox(
+                                value=True,
+                                label="Use LLM to extract contradicting terms",
+                            )
+                            contra_model = gr.Textbox(
+                                value="gpt-4o",
+                                label="Model for term extraction",
+                                scale=2,
+                            )
+                        with gr.Row():
+                            dl_pairs = gr.File(
+                                label="Download pairs.json", interactive=False
+                            )
+                            # Labeled spans export (CSV)
+                            make_labels_btn = gr.Button("Build labeled spans CSV")
+                            dl_labels = gr.DownloadButton(
+                                label="Download labeled_spans.csv", visible=True
+                            )
+                        with gr.Row():
+                            artifacts_json = gr.JSON(label="Artifacts", visible=False)
+            with gr.Column(scale=1):
+                run_btn = gr.Button("Run", variant="primary")
 
-            with gr.Accordion("⚙️ Settings", open=False):
-                with gr.Row():
-                    use_llm_12 = gr.Checkbox(
-                        value=True, label="Use combined Extract+NLI (LLM)"
-                    )
-                    llm_model = gr.Textbox(
-                        value="gpt-4o", label="LLM model (for combined 1+2)"
-                    )
-                with gr.Row():
-                    nli_model = gr.Dropdown(
-                        label="NLI model (when not using LLM 1+2)",
-                        choices=_list_models(),
-                        value=_list_models()[0] if _list_models() else None,
-                    )
-                    device = gr.Dropdown(
-                        choices=["cpu", "cuda"], value="cpu", label="Device"
-                    )
-                with gr.Row():
-                    batch_size = gr.Slider(
-                        8, 128, value=64, step=8, label="Batch size (embed)"
-                    )
-                    window_size = gr.Slider(
-                        5, 200, value=50, step=5, label="Window size (align)"
-                    )
-                    threshold = gr.Slider(
-                        0.5, 0.99, value=0.90, step=0.01, label="Similarity threshold"
-                    )
-                with gr.Row():
-                    claim_prompt = gr.Textbox(
-                        value=LLM_NLI_SYSTEM_PROMPT or DEFAULT_SYSTEM_PROMPT,
-                        lines=8,
-                        label="Claim extraction system prompt",
-                    )
-                with gr.Row():
-                    use_llm_contra = gr.Checkbox(
-                        value=True, label="Use LLM to extract contradicting terms"
-                    )
-                    contra_model = gr.Textbox(
-                        value="gpt-4o", label="Model for term extraction", scale=2
-                    )
-                with gr.Row():
-                    dl_pairs = gr.File(label="Download pairs.json", interactive=False)
-                    # Labeled spans export (CSV)
-                    make_labels_btn = gr.Button("Build labeled spans CSV")
-                    dl_labels = gr.DownloadButton(
-                        label="Download labeled_spans.csv", visible=True
-                    )
-                with gr.Row():
-                    artifacts_json = gr.JSON(label="Artifacts", visible=True)
-
-            run_btn = gr.Button("Run", variant="primary")
             gr.HTML(_legend_html(), elem_id="viewer_legend")
 
             with gr.Row(elem_id="viewer_row"):
