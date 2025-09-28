@@ -209,54 +209,70 @@ def _alnum_len(s: str) -> int:
 
 def _wrap_terms_html(text: str, terms: List[str]) -> str:
     """
-    HTML-escape text and wrap selected terms/phrases in <mark class="contra-term">…</mark>.
-    - Ignores very short items and common 1–2 char function words.
-    - Matches only on token boundaries (no mid-word matches).
-    - Case-insensitive. Longer phrases take precedence.
+    Wrap selected terms/phrases in <mark class="contra-term">…</mark>, **merging**
+    adjacent matches if separated only by whitespace. This way tokens like
+    ['blow','my','mind'] become a single marked phrase “blow my mind”.
     """
     if not text:
         return ""
     if not terms:
         return _escape(text)
 
-    # normalize, de-dup, length filter, stopword filter
-    cleaned = []
-    seen = set()
+    # normalize, de-dup, filter
+    cleaned, seen = [], set()
     for t in sorted((t or "").strip() for t in terms if t):
         if not t:
             continue
-        key = t.lower()
-        if key in seen:
+        k = t.lower()
+        if k in seen:
             continue
-        seen.add(key)
-        if key in RUS_STOPWORDS_SHORT:
+        seen.add(k)
+        if k in RUS_STOPWORDS_SHORT:
             continue
         if _alnum_len(t) < MIN_TERM_ALNUM_LEN:
             continue
         cleaned.append(t)
-
     if not cleaned:
         return _escape(text)
 
-    # Build boundary-safe alternation:
-    # (?<!\w)term(?!\w) ensures we highlight whole tokens/phrases only.
-    parts = [
+    # whole-token regex for each term/phrase
+    alts = [
         rf"(?<!\w){re.escape(t)}(?!\w)" for t in sorted(cleaned, key=len, reverse=True)
     ]
-    pattern = "(?:" + "|".join(parts) + ")"
-
+    pattern = "(?:" + "|".join(alts) + ")"
     try:
         rx = re.compile(pattern, flags=re.IGNORECASE | re.UNICODE)
     except Exception:
-        # On any regex build issue, just return escaped text
         return _escape(text)
 
+    # collect raw matches (start, end), then merge neighbors if gap is only whitespace
+    matches = [m.span() for m in rx.finditer(text)]
+    if not matches:
+        return _escape(text)
+    merged: List[Tuple[int, int]] = []
+    s0, e0 = matches[0]
+    for s, e in matches[1:]:
+        gap = text[e0:s]
+        gap_stripped = gap.strip()
+        # merge if the gap is:
+        #   - only whitespace, OR
+        #   - whitespace + exactly one symbol from {',' '.' ':'}
+        if gap and (gap_stripped == "" or re.fullmatch(r"[,.:]", gap_stripped)):
+            e0 = e  # include the gap (spaces + the one symbol) inside the marked region
+        else:
+            merged.append((s0, e0))
+            s0, e0 = s, e
+    merged.append((s0, e0))
+
+    # build HTML with escapes, marking merged segments
     out, last = [], 0
-    for m in rx.finditer(text):
-        out.append(_escape(text[last : m.start()]))
-        out.append(f'<mark class="contra-term">{_escape(m.group(0))}</mark>')
-        last = m.end()
-    out.append(_escape(text[last:]))
+    for s, e in merged:
+        if s > last:
+            out.append(_escape(text[last:s]))
+        out.append(f'<mark class="contra-term">{_escape(text[s:e])}</mark>')
+        last = e
+    if last < len(text):
+        out.append(_escape(text[last:]))
     return "".join(out)
 
 
