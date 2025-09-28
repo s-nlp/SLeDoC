@@ -143,43 +143,22 @@ BASE_CSS = """
 # All the custom JS for interactivity and alignment
 CUSTOM_JS = """
 () => {
-  /* =========================
-     Helpers for Shadow DOM
-     ========================= */
+  /* ===== Shadow DOM helpers (Gradio) ===== */
   const appEl  = () => document.querySelector("gradio-app");
   const root   = () => (appEl() && appEl().shadowRoot) ? appEl().shadowRoot : document;
   const q      = (sel) => root().querySelector(sel);
   const qa     = (sel) => root().querySelectorAll(sel);
 
-  /* Track the currently focused left paragraph index */
+  /* Which left paragraph (pair) is focused */
   const current = { idx: null };
 
-  /* Option: keep selected paragraph centered inside the LEFT pane scroller */
-  const CENTER_ON_MOVE = true;
-  function centerViewportOnLeft(idx){
-    try{
-      const L  = q('#left_pane');
-      const lb = q(`#left_pane .para-box[data-idx="${idx}"]`);
-      if (!L || !lb) return;
-
-      // compute 'y' = offsetTop of lb relative to #left_pane
-      let y = 0, node = lb;
-      while (node && node !== L) {
-        y += node.offsetTop || 0;
-        node = node.offsetParent;
-      }
-      const target = Math.max(0, Math.round(y - (L.clientHeight/2 - lb.offsetHeight/2)));
-      L.scrollTo({ top: target, behavior: 'smooth' });
-    }catch(_){}
-  }
-
-  /* ============ Visual helpers ============ */
+  /* ===== Visual helpers (hover + selection) ===== */
   const confBox = () => q('#conf_box');
 
   const hi = (id, col) => {
     const e = q('#' + CSS.escape(id));
     if (!e) return;
-    if (e.classList.contains('selected')) return;
+    if (e.classList.contains('selected')) return; // keep selection strong
     if (!('_bg' in e.dataset)) e.dataset._bg = e.style.backgroundColor || '';
     e.style.backgroundColor = col || e.style.backgroundColor;
     e.style.outline = '2px solid #000';
@@ -204,7 +183,36 @@ CUSTOM_JS = """
     if (confBox()) confBox().textContent = 'Confidence: -';
   };
 
-  /* ============ Bridge to Python ============ */
+  /* ===== Paragraph dimming (left pane) ===== */
+  function dimParagraphs(idx){
+    if (idx == null) return;
+    qa('#left_pane .para-box').forEach(pb => {
+      const p = pb.getAttribute('data-idx');
+      if (p === String(idx)) {
+        pb.classList.add('para-focus');
+        pb.classList.remove('para-dim');
+      } else {
+        pb.classList.remove('para-focus');
+        pb.classList.add('para-dim');
+      }
+    });
+  }
+  function clearParagraphDimming(){
+    qa('#left_pane .para-box').forEach(pb => pb.classList.remove('para-dim','para-focus'));
+  }
+
+  /* Reapply dimming after Gradio re-renders the left HTML */
+  (function observeLeftRepaints(){
+    const L = q('#left_pane');
+    if (!L || !('MutationObserver' in window)) return;
+    const obs = new MutationObserver(() => {
+      // DOM replaced → reapply dimming for the current idx (if any)
+      if (current.idx != null) dimParagraphs(current.idx);
+    });
+    obs.observe(L, { childList: true, subtree: true, characterData: true });
+  })();
+
+  /* ===== Bridge to Python (hidden textbox) ===== */
   function findBridgeBox(){
     return q('#bridge_click textarea, #bridge_click input');
   }
@@ -216,96 +224,7 @@ CUSTOM_JS = """
     return true;
   }
 
-  /* ============ Floating right panel logic ============ */
-  function rightHeaderOffset(){
-    const hdr = q('.right-float-wrap > .right-title'); // header above track
-    if (!hdr) return 0;
-    const cs = getComputedStyle(hdr);
-    const mb = parseFloat(cs.marginBottom || '0');
-    return hdr.offsetHeight + mb; // height + bottom margin
-  }
-
-  /* ============ Floating right panel alignment ============ */
-  function leftPane()  { return q('#left_pane'); }
-  function rightPane() { return q('#right_pane'); }
-
-  /* Set CSS variable --rfh to the height of the header above the right track */
-  function setRightHeaderPadding(){
-    qa('.right-float-wrap').forEach(wrap => {
-      const hdr = wrap.querySelector(':scope > .right-title');
-      if (!hdr) return;
-      const cs  = getComputedStyle(hdr);
-      const mb  = parseFloat(cs.marginBottom || '0');
-      const pad = hdr.offsetHeight + mb; // title height + margin
-      wrap.style.setProperty('--rfh', pad + 'px');
-    });
-  }
-
-  function moveFloatToIdx(idx){
-    const lb    = q(`#left_pane .para-box[data-idx="${idx}"]`);
-    const float = q('#float_box');
-    const track = q('#right_track');
-    const L     = leftPane();
-    if (!lb || !float || !track || !L) return false;
-
-    // offset of lb relative to #left_pane
-    let y = 0, node = lb;
-    while (node && node !== L) { y += node.offsetTop || 0; node = node.offsetParent; }
-
-    // convert content offset to visible position inside the left scroller
-    y = Math.max(0, Math.round(y - L.scrollTop));
-
-    // no header math here — padding-top on .right-float-wrap already reserves space
-    float.style.transform = `translateY(${y}px)`;
-    return true;
-  }
-
-  function syncRightTrackHeight(){
-    const L = leftPane();
-    const track = q('#right_track');
-    if (L && track) {
-      // Only match left content height; float’s top uses --rfh already
-      track.style.height = (L.scrollHeight) + 'px';
-    }
-  }
-
-  function scheduleAlign(idx){
-    let tries = 0;
-    const tick = () => {
-      tries++;
-      setRightHeaderPadding();     // <— ensure padding reflects current header size
-      syncRightTrackHeight();
-      const hasFloat = !!q('#float_box');
-      const ok = hasFloat ? (idx != null ? moveFloatToIdx(idx) : true) : false;
-      if (tries < 10 && !ok) setTimeout(tick, 90);
-    };
-    requestAnimationFrame(() => setTimeout(tick, 60));
-  }
-
-  /* Keep track height in sync as DOM changes */
-  (function observePanes(){
-    const L = leftPane();
-    const R = rightPane();
-    if (!L || !R || !('MutationObserver' in window)) return;
-    const obs = new MutationObserver(() => {
-      // When Gradio re-renders right_html, re-apply header padding first,
-      // then sync heights, then re-align the float position.
-      setTimeout(() => {
-        setRightHeaderPadding();
-        syncRightTrackHeight();
-        if (current.idx != null) moveFloatToIdx(current.idx);
-      }, 50);
-    });
-    obs.observe(L, { childList: true, subtree: true, characterData: true });
-    obs.observe(R, { childList: true, subtree: true, characterData: true });
-
-    // While user scrolls the LEFT pane, keep the float glued to the selected paragraph
-    L.addEventListener('scroll', () => {
-      if (current.idx != null) moveFloatToIdx(current.idx);
-    }, { passive: true });
-  })();
-
-  /* ============ Hover feedback ============ */
+  /* ===== Hover feedback (cross-highlight left/right) ===== */
   root().addEventListener('mouseover', ev => {
     const t = (ev.composedPath && ev.composedPath()[0]) || ev.target;
     const s = t && t.closest ? t.closest('span.hl') : null;
@@ -328,7 +247,7 @@ CUSTOM_JS = """
     }
   }, {capture:true});
 
-  /* ============ Click handling (UNIVERSAL BRIDGE) ============ */
+  /* ===== Click handling (no scrolling, no floating) ===== */
   root().addEventListener('click', function (e) {
     const path = e.composedPath ? e.composedPath() : [e.target];
     let target = null;
@@ -338,51 +257,59 @@ CUSTOM_JS = """
       }
     }
 
-    // A) Click on a highlighted span
+    // A) Click on a highlighted LEFT span
     const span = target && target.matches('.hl') ? target : null;
     if (span && span.hasAttribute('data-pair') && span.hasAttribute('data-left')) {
       e.preventDefault();
       e.stopPropagation();
 
-      clearSelection();
+      clearSelection(); // only clear span selection; dimming handled below
       span.classList.add('selected');
-      const targetId = span.dataset.target;
-      const col = span.dataset.hcolor || '';
+
+      const mateId = span.dataset.target;
+      const col    = span.dataset.hcolor || '';
       span.style.backgroundColor = col;
       span.style.outline = '2px solid #000';
-      if (targetId) {
-        const mate = q('#' + CSS.escape(targetId));
+      if (mateId) {
+        const mate = q('#' + CSS.escape(mateId));
         if (mate) {
           mate.classList.add('selected');
           mate.style.backgroundColor = mate.dataset.hcolor || col;
           mate.style.outline = '2px solid #000';
         }
       }
+
       const pidx = parseInt(span.getAttribute('data-pair') || '0', 10);
       const lidx = span.getAttribute('data-left');
 
       if (sendBridge(`S:${pidx}:${lidx}`)) {
         current.idx = pidx;
-        scheduleAlign(current.idx);
-        if (CENTER_ON_MOVE) centerViewportOnLeft(current.idx);
+        dimParagraphs(current.idx);   // ← NEW: only dim, no scroll, no float
       }
       return;
     }
 
-    // B) Click on a left paragraph card
+    // B) Click on a LEFT paragraph card (anywhere on the card)
     const para = target && target.matches('.para-box') ? target : null;
     if (para && para.hasAttribute('data-idx')) {
       const idx = parseInt(para.getAttribute('data-idx') || '0', 10);
       if (sendBridge(`P:${idx}`)) {
         current.idx = idx;
-        scheduleAlign(current.idx);
-        if (CENTER_ON_MOVE) centerViewportOnLeft(current.idx);
+        dimParagraphs(current.idx);   // ← NEW: only dim, no scroll, no float
       }
     }
   }, {capture:true});
 
-  /* Initial alignment + window resize */
-  window.addEventListener('load',  () => { setTimeout(() => { setRightHeaderPadding(); scheduleAlign(current.idx); }, 250); });
-  window.addEventListener('resize', () => { setRightHeaderPadding(); scheduleAlign(current.idx); });
+  /* Optional: clear dimming if user clicks empty space in left pane */
+  root().addEventListener('click', function (e) {
+    const left = q('#left_pane');
+    if (!left) return;
+    if (left.contains(e.target)) {
+      // clicks already handled above
+    } else {
+      current.idx = null;
+      clearParagraphDimming();
+    }
+  }, {capture:true});
 }
 """

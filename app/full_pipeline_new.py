@@ -67,7 +67,6 @@ EXTRA_CSS = (
 
 /* contradiction term highlight */
 .contra-term{ background: #fff59a; padding:0 2px; border-radius:3px; }
-   /* red */
 
 /* selected state: strong outline, keep original background color */
 .hl.selected { outline:2px solid #000 !important; }
@@ -77,7 +76,10 @@ EXTRA_CSS = (
 
 /* make the right column cards use the same vertical spacing as the left */
 .mirror-box{
-  border:1px solid #adb5bd; padding:12px; border-radius:12px; background:#fafafa;
+  border:1px solid #adb5bd;
+  padding:12px; 
+  border-radius:12px;
+  background:#fafafa;
   min-height:140px;
   margin:12px 0;
 }
@@ -106,8 +108,12 @@ EXTRA_CSS = (
 .para-box{ min-height: unset; }
 .mirror-box{ min-height: unset; }
 
-/* right pane: flows with page scroll (no inner scroll, no sticky) */
-#right_pane { position: static; max-height: unset; overflow: visible; }
+/* right pane: independent scroller */
+#right_pane { 
+  position: static;
+  max-height: 80vh;
+  overflow-y: auto;
+}
 
 /* reasoning panel — tighter to right pane, bolder, larger text */
 .reason-wrap {
@@ -141,41 +147,6 @@ EXTRA_CSS = (
 .contra-src { margin-top:8px;font-size:12px;color:#6b7280;display:grid;gap:2px }
 .src-tag { font-weight:600;color:#4b5563 }
 
-/* Floating right panel */
-.right-float-wrap {
-  position: relative;
-  width: 100%;
-  --rfh: 30px;           /* fallback; JS will set real height */
-}
-
-/* Keep the right title always visible above the floating box */
-.right-float-wrap > .right-title{
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: #fff;
-  padding: 2px 0;
-}
-
-/* Ensure the floating panel sits below the title */
-#float_box{
-  z-index: 1;
-  top: var(--rfh, 28px);
-}
-
-#right_track { position: relative; height: 0; }  /* JS will sync to left height */
-/* The floating box */
-#float_box {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  will-change: transform;
-  transition: transform 220ms ease;
-}
-/* Avoid extra margins moving the absolute box unpredictably */
-#float_box.mirror-box { margin: 0; }
-
 /* Make the left pane feel like a single “big box” of Document A */
 .left-pane {
     border: 1px solid #e5e7eb;
@@ -204,6 +175,10 @@ EXTRA_CSS = (
   margin:4px 4px 10px 4px;
   opacity:.9;
 }
+
+/* Dimming behavior for left pane */
+.left-pane .para-box.para-focus { outline: 2px solid #334155; }
+.left-pane .para-box.para-dim   { opacity: .55; filter: saturate(.6); }
 """
 )
 
@@ -671,60 +646,43 @@ def _render_right_col(
     target_right_idx: Optional[int] = None,
 ) -> str:
     """
-    Render a single floating right panel (inside a tall track matching left height).
-    The content shows the focused pair's Document B claims. The panel slides via JS.
+    Static right column (independent scroller). No floating alignment.
+    Shows Document B claims for the selected pair (and, if a left span is selected,
+    prioritizes/annotates the linked right spans).
     """
     if not blocks:
-        return '<div class="right-float-wrap"><div id="right_track"></div><div id="float_box" class="mirror-box">—</div></div>'
+        return (
+            '<div class="right-pane-inner">'
+            '<div class="right-title">Snippet of text in Document B</div>'
+            '<div class="mirror-box">—</div>'
+            '</div>'
+        )
 
     k, i_left = focus
-    k = max(0, min(k, len(blocks) - 1))  # clamp
+    k = max(0, min(k, len(blocks) - 1))
     b = blocks[k]
 
     out2 = b.get("output_2") or []
     links, _left_color = _link_map_for_pair(b)
 
-    # choose right-side coloring (worst label wins)
-    label_for_right: Dict[int, str] = {}
+    # severity for deciding "worst" label per right span
     severity = {"contradiction": 3, "neutral": 2, "entailment": 1}
+    label_for_right: Dict[int, str] = {}
+
+    def take_worst(cur: str, new: str) -> str:
+        return new if severity.get(new, 0) > severity.get(cur or "", 0) else cur
 
     if i_left is None:
         for li, pairs in links.items():
             for rj, lbl in pairs:
-                if severity.get(lbl, 0) > severity.get(label_for_right.get(rj, ""), 0):
-                    label_for_right[rj] = lbl
-        _ = (
-            sorted(label_for_right.keys())
-            if label_for_right
-            else list(range(len(out2)))
-        )
+                label_for_right[rj] = take_worst(label_for_right.get(rj, ""), str(lbl).lower())
+        right_order = sorted(label_for_right.keys()) if label_for_right else list(range(len(out2)))
     else:
         for rj, lbl in links.get(i_left, []):
-            if severity.get(lbl, 0) > severity.get(label_for_right.get(rj, ""), 0):
-                label_for_right[rj] = lbl
-        _ = sorted(label_for_right.keys())
+            label_for_right[rj] = take_worst(label_for_right.get(rj, ""), str(lbl).lower())
+        right_order = sorted(label_for_right.keys())
 
-    # Right-side anchors (for addition/neutral “anchor” display)
-    anchor_for_right: Dict[int, str] = {}
-    for rr in b.get("nli_results") or []:
-        lblr = str(rr.get("label") or "").lower()
-        if lblr in ("neutral", "addition"):
-            hyp = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
-            anc = rr.get("anchor")
-            if not anc:
-                continue
-            for jj, cc in enumerate(out2):
-                txtj = cc.get("claim") or cc.get("input") or ""
-                if txtj and txtj.strip() == hyp.strip():
-                    # Try to find anchor text from left side if we have an index
-                    if "output_1" in b:
-                        raw_anchor = (b.get("output_1") or [])[anc]
-                        anchor_for_right[jj] = str(
-                            raw_anchor.get("claim") or raw_anchor.get("input") or ""
-                        )
-                    break
-
-    # Build best-left mapping to set data-target/hcolor for hover sync
+    # Map each right span to its "best" left mate for hover sync
     best_for_right: Dict[int, Tuple[int, str]] = {}
     if i_left is None:
         for li, pairs in links.items():
@@ -738,24 +696,42 @@ def _render_right_col(
             if prev is None or severity.get(lbl, 0) > severity.get(prev[1], 0):
                 best_for_right[rj] = (i_left, lbl)
 
-    # Compose spans body
-    if out2:
+    # Optional anchor indicators (for neutral/addition with anchor on left)
+    anchor_for_right: Dict[int, str] = {}
+    for rr in b.get("nli_results") or []:
+        lblr = str(rr.get("label") or "").lower()
+        if lblr in ("neutral", "addition"):
+            hyp = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
+            anc = rr.get("anchor")
+            if anc is None:
+                continue
+            for jj, cc in enumerate(out2):
+                txtj = str(cc.get("claim") or cc.get("input") or "")
+                if txtj.strip() == hyp.strip():
+                    if "output_1" in b:
+                        raw_anchor = (b.get("output_1") or [])[anc]
+                        anchor_for_right[jj] = str(
+                            raw_anchor.get("claim") or raw_anchor.get("input") or ""
+                        )
+                    break
+
+    # Build the right body
+    if out2 and right_order:
         spans = []
-        for j, c in enumerate(out2):
+        for j in right_order:
+            if not (0 <= j < len(out2)):
+                continue
+            c = out2[j]
             raw = str(c.get("claim") or c.get("input") or "")
-            if (
-                target_right_idx is not None
-                and j == int(target_right_idx)
-                and contra_terms
-            ):
-                txt = _wrap_terms_html(
-                    raw, (contra_terms or {}).get("from_span_2") or []
-                )
+
+            # highlight contradicting terms only for the target right span, if provided
+            if target_right_idx is not None and j == int(target_right_idx) and contra_terms:
+                txt = _wrap_terms_html(raw, (contra_terms or {}).get("from_span_2") or [])
             else:
                 txt = _escape(raw)
 
-            lbl = label_for_right.get(j, "") or ""
-            cls = "hl " + lbl
+            lbl = (label_for_right.get(j, "") or "").lower()
+            cls = "hl " + (lbl if lbl in ("contradiction","neutral","entailment") else "")
 
             li_for_j = best_for_right.get(j)
             if li_for_j:
@@ -779,20 +755,14 @@ def _render_right_col(
 
     hdr = f"Document B — {'matching claims' if i_left is None else 'matching claims for selected span'} (pair {k+1})"
 
-    # Put the explanation panel *inside* the floating box so it moves together
-    reason_inline = _render_reason(blocks, focus)
-
-    # Floating container: track + one box with current content
     return f"""
-    <div class="right-float-wrap">
-      <div class="right-title">Snippet of text in Document B</div>
-      <div id="right_track"></div>
-      <div id="float_box" class="mirror-box" data-idx="{k}">
-        <div class="para-head">{hdr}</div>
-        <div>{body}</div>
-        {reason_inline}
+      <div class="right-pane-inner">
+        <div class="right-title">Snippet of text in Document B</div>
+        <div class="mirror-box" data-idx="{k}">
+          <div class="para-head">{hdr}</div>
+          <div>{body}</div>
+        </div>
       </div>
-    </div>
     """
 
 
@@ -1187,11 +1157,6 @@ with gr.Blocks(
                     pair_picker,
                 ],
             )
-
-            def _hide_reason(_):
-                return gr.update(visible=False)
-
-            run_btn.click(_hide_reason, inputs=None, outputs=reason_html)
 
             def _export(p):
                 if not p:
