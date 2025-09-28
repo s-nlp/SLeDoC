@@ -77,7 +77,7 @@ EXTRA_CSS = (
 /* make the right column cards use the same vertical spacing as the left */
 .mirror-box{
   border:1px solid #adb5bd;
-  padding:12px; 
+  padding:12px;
   border-radius:12px;
   background:#fafafa;
   min-height:140px;
@@ -109,7 +109,7 @@ EXTRA_CSS = (
 .mirror-box{ min-height: unset; }
 
 /* right pane: independent scroller */
-#right_pane { 
+#right_pane {
   position: static;
   max-height: 80vh;
   overflow-y: auto;
@@ -646,16 +646,18 @@ def _render_right_col(
     target_right_idx: Optional[int] = None,
 ) -> str:
     """
-    Static right column (independent scroller). No floating alignment.
-    Shows Document B claims for the selected pair (and, if a left span is selected,
-    prioritizes/annotates the linked right spans).
+    Static right column (independent scroller).
+    - Always shows the FULL paragraph of Document B for the selected pair.
+    - Shows ALL extracted claims for B (not only the matched span).
+    - If a left span is selected and contra_terms are available, highlights those terms
+      inside the full paragraph (and also in the specific right span if target_right_idx).
     """
     if not blocks:
         return (
             '<div class="right-pane-inner">'
             '<div class="right-title">Snippet of text in Document B</div>'
             '<div class="mirror-box">—</div>'
-            '</div>'
+            "</div>"
         )
 
     k, i_left = focus
@@ -665,22 +667,25 @@ def _render_right_col(
     out2 = b.get("output_2") or []
     links, _left_color = _link_map_for_pair(b)
 
-    # severity for deciding "worst" label per right span
+    # Decide label per right-claim (worst wins), but we will render ALL claims
     severity = {"contradiction": 3, "neutral": 2, "entailment": 1}
     label_for_right: Dict[int, str] = {}
 
     def take_worst(cur: str, new: str) -> str:
         return new if severity.get(new, 0) > severity.get(cur or "", 0) else cur
 
+    # Accumulate labels from links (if a left is selected, keep those; otherwise aggregate all)
     if i_left is None:
         for li, pairs in links.items():
             for rj, lbl in pairs:
-                label_for_right[rj] = take_worst(label_for_right.get(rj, ""), str(lbl).lower())
-        right_order = sorted(label_for_right.keys()) if label_for_right else list(range(len(out2)))
+                label_for_right[rj] = take_worst(
+                    label_for_right.get(rj, ""), str(lbl).lower()
+                )
     else:
         for rj, lbl in links.get(i_left, []):
-            label_for_right[rj] = take_worst(label_for_right.get(rj, ""), str(lbl).lower())
-        right_order = sorted(label_for_right.keys())
+            label_for_right[rj] = take_worst(
+                label_for_right.get(rj, ""), str(lbl).lower()
+            )
 
     # Map each right span to its "best" left mate for hover sync
     best_for_right: Dict[int, Tuple[int, str]] = {}
@@ -715,23 +720,29 @@ def _render_right_col(
                         )
                     break
 
-    # Build the right body
-    if out2 and right_order:
+    # Build ALL right claims (not filtered)
+    if out2:
         spans = []
-        for j in right_order:
-            if not (0 <= j < len(out2)):
-                continue
+        for j in range(len(out2)):
             c = out2[j]
             raw = str(c.get("claim") or c.get("input") or "")
 
-            # highlight contradicting terms only for the target right span, if provided
-            if target_right_idx is not None and j == int(target_right_idx) and contra_terms:
-                txt = _wrap_terms_html(raw, (contra_terms or {}).get("from_span_2") or [])
+            # highlight contradicting terms only for the target right claim
+            if (
+                target_right_idx is not None
+                and j == int(target_right_idx)
+                and contra_terms
+            ):
+                txt = _wrap_terms_html(
+                    raw, (contra_terms or {}).get("from_span_2") or []
+                )
             else:
                 txt = _escape(raw)
 
             lbl = (label_for_right.get(j, "") or "").lower()
-            cls = "hl " + (lbl if lbl in ("contradiction","neutral","entailment") else "")
+            cls = "hl " + (
+                lbl if lbl in ("contradiction", "neutral", "entailment") else ""
+            )
 
             li_for_j = best_for_right.get(j)
             if li_for_j:
@@ -749,18 +760,18 @@ def _render_right_col(
             spans.append(
                 f'<span id="R-{k}-{j}" class="{cls}" data-pair="{k}" data-right="{j}"{target_attr}{hcolor_attr}>{txt}</span>{anchor_sup}'
             )
-        body = "<br>".join(spans)
+        claims_body = "<br>".join(spans)
     else:
-        body = _escape(_text_right(b))
+        claims_body = "—"
 
-    hdr = f"Document B — {'matching claims' if i_left is None else 'matching claims for selected span'} (pair {k+1})"
+    hdr = f"Document B — claims (pair {k+1})"
 
     return f"""
       <div class="right-pane-inner">
         <div class="right-title">Snippet of text in Document B</div>
         <div class="mirror-box" data-idx="{k}">
           <div class="para-head">{hdr}</div>
-          <div>{body}</div>
+          <div>{claims_body}</div>
         </div>
       </div>
     """
