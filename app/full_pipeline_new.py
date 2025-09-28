@@ -142,13 +142,27 @@ EXTRA_CSS = (
 .src-tag { font-weight:600;color:#4b5563 }
 
 /* Floating right panel */
-#right_pane { position: relative; overflow: visible; }
 .right-float-wrap {
-    position: relative;
-    width: 100%;
-    --rfh: 0px;              /* right header height (set from JS) */
-    padding-top: var(--rfh); /* reserve space under "Snippet of text in Document B" */
+  position: relative;
+  width: 100%;
+  --rfh: 30px;           /* fallback; JS will set real height */
 }
+
+/* Keep the right title always visible above the floating box */
+.right-float-wrap > .right-title{
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+  padding: 2px 0;
+}
+
+/* Ensure the floating panel sits below the title */
+#float_box{
+  z-index: 1;
+  top: var(--rfh, 28px);
+}
+
 #right_track { position: relative; height: 0; }  /* JS will sync to left height */
 /* The floating box */
 #float_box {
@@ -771,7 +785,7 @@ def _render_right_col(
     # Floating container: track + one box with current content
     return f"""
     <div class="right-float-wrap">
-      <div class="left-title">Snippet of text in Document B</div>
+      <div class="right-title">Snippet of text in Document B</div>
       <div id="right_track"></div>
       <div id="float_box" class="mirror-box" data-idx="{k}">
         <div class="para-head">{hdr}</div>

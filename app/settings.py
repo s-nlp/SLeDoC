@@ -218,7 +218,7 @@ CUSTOM_JS = """
 
   /* ============ Floating right panel logic ============ */
   function rightHeaderOffset(){
-    const hdr = q('.right-float-wrap > .left-title'); // header above track
+    const hdr = q('.right-float-wrap > .right-title'); // header above track
     if (!hdr) return 0;
     const cs = getComputedStyle(hdr);
     const mb = parseFloat(cs.marginBottom || '0');
@@ -231,13 +231,14 @@ CUSTOM_JS = """
 
   /* Set CSS variable --rfh to the height of the header above the right track */
   function setRightHeaderPadding(){
-    const wrap = q('.right-float-wrap');
-    const hdr  = q('.right-float-wrap > .left-title'); // header above track
-    if (!wrap || !hdr) return;
-    const cs = getComputedStyle(hdr);
-    const mb = parseFloat(cs.marginBottom || '0');
-    const pad = hdr.offsetHeight + mb;                 // title height + its bottom margin
-    wrap.style.setProperty('--rfh', pad + 'px');
+    qa('.right-float-wrap').forEach(wrap => {
+      const hdr = wrap.querySelector(':scope > .right-title');
+      if (!hdr) return;
+      const cs  = getComputedStyle(hdr);
+      const mb  = parseFloat(cs.marginBottom || '0');
+      const pad = hdr.offsetHeight + mb; // title height + margin
+      wrap.style.setProperty('--rfh', pad + 'px');
+    });
   }
 
   function moveFloatToIdx(idx){
@@ -263,8 +264,8 @@ CUSTOM_JS = """
     const L = leftPane();
     const track = q('#right_track');
     if (L && track) {
-      // add header height so the absolute float has room below the title
-      track.style.height = (L.scrollHeight + rightHeaderOffset()) + 'px';
+      // Only match left content height; float’s top uses --rfh already
+      track.style.height = (L.scrollHeight) + 'px';
     }
   }
 
@@ -286,7 +287,15 @@ CUSTOM_JS = """
     const L = leftPane();
     const R = rightPane();
     if (!L || !R || !('MutationObserver' in window)) return;
-    const obs = new MutationObserver(() => setTimeout(syncRightTrackHeight, 50));
+    const obs = new MutationObserver(() => {
+      // When Gradio re-renders right_html, re-apply header padding first,
+      // then sync heights, then re-align the float position.
+      setTimeout(() => {
+        setRightHeaderPadding();
+        syncRightTrackHeight();
+        if (current.idx != null) moveFloatToIdx(current.idx);
+      }, 50);
+    });
     obs.observe(L, { childList: true, subtree: true, characterData: true });
     obs.observe(R, { childList: true, subtree: true, characterData: true });
 
