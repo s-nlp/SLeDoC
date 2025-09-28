@@ -143,8 +143,14 @@ EXTRA_CSS = (
 
 /* Floating right panel */
 #right_pane { position: relative; overflow: visible; }
-.right-float-wrap { position: relative; width: 100%; }
+.right-float-wrap {
+    position: relative;
+    width: 100%;
+    --rfh: 0px;              /* right header height (set from JS) */
+    padding-top: var(--rfh); /* reserve space under "Snippet of text in Document B" */
+}
 #right_track { position: relative; height: 0; }  /* JS will sync to left height */
+/* The floating box */
 #float_box {
   position: absolute;
   top: 0;
@@ -153,6 +159,8 @@ EXTRA_CSS = (
   will-change: transform;
   transition: transform 220ms ease;
 }
+/* Avoid extra margins moving the absolute box unpredictably */
+#float_box.mirror-box { margin: 0; }
 
 /* Make the left pane feel like a single “big box” of Document A */
 .left-pane {

@@ -216,9 +216,29 @@ CUSTOM_JS = """
     return true;
   }
 
+  /* ============ Floating right panel logic ============ */
+  function rightHeaderOffset(){
+    const hdr = q('.right-float-wrap > .left-title'); // header above track
+    if (!hdr) return 0;
+    const cs = getComputedStyle(hdr);
+    const mb = parseFloat(cs.marginBottom || '0');
+    return hdr.offsetHeight + mb; // height + bottom margin
+  }
+
   /* ============ Floating right panel alignment ============ */
   function leftPane()  { return q('#left_pane'); }
   function rightPane() { return q('#right_pane'); }
+
+  /* Set CSS variable --rfh to the height of the header above the right track */
+  function setRightHeaderPadding(){
+    const wrap = q('.right-float-wrap');
+    const hdr  = q('.right-float-wrap > .left-title'); // header above track
+    if (!wrap || !hdr) return;
+    const cs = getComputedStyle(hdr);
+    const mb = parseFloat(cs.marginBottom || '0');
+    const pad = hdr.offsetHeight + mb;                 // title height + its bottom margin
+    wrap.style.setProperty('--rfh', pad + 'px');
+  }
 
   function moveFloatToIdx(idx){
     const lb    = q(`#left_pane .para-box[data-idx="${idx}"]`);
@@ -229,11 +249,12 @@ CUSTOM_JS = """
 
     // offset of lb relative to #left_pane
     let y = 0, node = lb;
-    while (node && node !== L) {
-      y += node.offsetTop || 0;
-      node = node.offsetParent;
-    }
-    y = Math.max(0, Math.round(y));
+    while (node && node !== L) { y += node.offsetTop || 0; node = node.offsetParent; }
+
+    // convert content offset to visible position inside the left scroller
+    y = Math.max(0, Math.round(y - L.scrollTop));
+
+    // no header math here — padding-top on .right-float-wrap already reserves space
     float.style.transform = `translateY(${y}px)`;
     return true;
   }
@@ -241,13 +262,17 @@ CUSTOM_JS = """
   function syncRightTrackHeight(){
     const L = leftPane();
     const track = q('#right_track');
-    if (L && track) track.style.height = L.scrollHeight + 'px';
+    if (L && track) {
+      // add header height so the absolute float has room below the title
+      track.style.height = (L.scrollHeight + rightHeaderOffset()) + 'px';
+    }
   }
 
   function scheduleAlign(idx){
     let tries = 0;
     const tick = () => {
       tries++;
+      setRightHeaderPadding();     // <— ensure padding reflects current header size
       syncRightTrackHeight();
       const hasFloat = !!q('#float_box');
       const ok = hasFloat ? (idx != null ? moveFloatToIdx(idx) : true) : false;
@@ -265,7 +290,7 @@ CUSTOM_JS = """
     obs.observe(L, { childList: true, subtree: true, characterData: true });
     obs.observe(R, { childList: true, subtree: true, characterData: true });
 
-    // ✅ While user scrolls the LEFT pane, keep the float glued to the selected paragraph
+    // While user scrolls the LEFT pane, keep the float glued to the selected paragraph
     L.addEventListener('scroll', () => {
       if (current.idx != null) moveFloatToIdx(current.idx);
     }, { passive: true });
@@ -348,7 +373,7 @@ CUSTOM_JS = """
   }, {capture:true});
 
   /* Initial alignment + window resize */
-  window.addEventListener('load',  () => setTimeout(() => scheduleAlign(current.idx), 250));
-  window.addEventListener('resize', () => scheduleAlign(current.idx));
+  window.addEventListener('load',  () => { setTimeout(() => { setRightHeaderPadding(); scheduleAlign(current.idx); }, 250); });
+  window.addEventListener('resize', () => { setRightHeaderPadding(); scheduleAlign(current.idx); });
 }
 """
