@@ -329,6 +329,38 @@ def _index_claims(claims: List[Dict[str, Any]]) -> Dict[str, int]:
 def _get_claim_text(claim: Dict[str, Any]) -> str:
     return str(claim.get("claim") or claim.get("input") or "").strip()
 
+def _entailment_maps(
+    block: Dict[str, Any]
+) -> Tuple[Dict[int, int], Dict[int, int]]:
+    """
+    Return two maps based on entailment/equivalent links only:
+      ent_L_to_R[left_idx]  = right_idx
+      ent_R_to_L[right_idx] = left_idx
+    We pick the first seen mate per side for stability.
+    """
+    out1 = block.get("output_1") or []
+    out2 = block.get("output_2") or []
+    idx1 = _index_claims(out1)
+    idx2 = _index_claims(out2)
+    ent_L_to_R: Dict[int, int] = {}
+    ent_R_to_L: Dict[int, int] = {}
+    for r in block.get("nli_results") or []:
+        lbl = str(r.get("label") or "").lower()
+        if lbl not in ("entailment", "equivalent"):
+            continue
+        prem = str(r.get("premise_raw") or r.get("premise") or "")
+        hyp  = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+        li = idx1.get(prem); rj = idx2.get(hyp)
+        if li is None or rj is None:
+            li = idx1.get(hyp); rj = idx2.get(prem)
+        if li is None or rj is None:
+            continue
+        if li not in ent_L_to_R:
+            ent_L_to_R[li] = rj
+        if rj not in ent_R_to_L:
+            ent_R_to_L[rj] = li
+    return ent_L_to_R, ent_R_to_L
+
 def _build_addition_anchors(
     block: Dict[str, Any]
 ) -> Tuple[Dict[int, int], Dict[int, int], Dict[int, int]]:
@@ -346,10 +378,14 @@ def _build_addition_anchors(
     out2 = block.get("output_2") or []
     idx1 = _index_claims(out1)
     idx2 = _index_claims(out2)
+    ent_L_to_R, ent_R_to_L = _entailment_maps(block)
 
     left_addition_anchor: Dict[int, int] = {}
     right_add_to_left_anchor: Dict[int, int] = {}
     right_add_to_right_anchor: Dict[int, int] = {}
+
+    # Pre-compute sorted right indices that have any entailment (for "closest green before" fallback)
+    ent_right_idxs_sorted = sorted(ent_R_to_L.keys())
 
     for r in block.get("nli_results") or []:
         lbl = str(r.get("label") or "").lower()
@@ -364,22 +400,47 @@ def _build_addition_anchors(
         if li is None or rj is None:
             continue
 
-        anc_li = r.get("anchor")
-        if not isinstance(anc_li, int) or not (0 <= anc_li < len(out1)):
-            anc_li = li
-        anchor_text = _get_claim_text(out1[anc_li])
-        anc_rj = idx2.get(anchor_text, None)
+        anc_li: Optional[int] = r.get("anchor")
+        if not isinstance(anc_li, int) or not (0 <= int(anc_li) < len(out1)):
+            anc_li = None
+
+        # 1) prefer explicit left anchor from the LLM
+        # 2) else: if current right span has an entailing left → use that
+        if anc_li is None:
+            anc_li = ent_R_to_L.get(rj)
+
+        # 3) else: choose the CLOSEST entailing right (prefer previous), and use *its* left mate
+        if anc_li is None and ent_right_idxs_sorted:
+            # previous
+            prevs = [x for x in ent_right_idxs_sorted if x < rj]
+            nexts = [x for x in ent_right_idxs_sorted if x > rj]
+            j0 = prevs[-1] if prevs else (nexts[0] if nexts else None)
+            if j0 is not None:
+                anc_li = ent_R_to_L.get(j0)
+                # also keep that right j0 as the right-side in-pane anchor
+                if anc_li is not None:
+                    right_add_to_right_anchor[rj] = j0
+
+        # 4) last resort: pick the closest left span (prefer previous)
+        if anc_li is None and out1:
+            anc_li = max(0, min(li - 1, len(out1) - 1))
+
+        # Decide right-side anchor to show in-pane (prefer the entailing mate of anc_li)
+        anc_rj: Optional[int] = None
+        if anc_li is not None and anc_li in ent_L_to_R:
+            anc_rj = ent_L_to_R[anc_li]
+        # if not found yet but we left a right-side anchor above, keep it
+        if anc_rj is None and rj in right_add_to_right_anchor:
+            anc_rj = right_add_to_right_anchor[rj]
 
         # Heuristic: if left index differs from its anchor index, treat that left span as "addition".
-        if li != anc_li:
-            left_addition_anchor[li] = anc_li
+        if anc_li is not None and li != anc_li:
+            left_addition_anchor[li] = int(anc_li)
         # If right claim isn't itself the anchor claim, treat it as "addition".
+        if anc_li is not None:
+            right_add_to_left_anchor[rj] = int(anc_li)
         if anc_rj is not None and anc_rj != rj:
-            right_add_to_left_anchor[rj]  = anc_li
-            right_add_to_right_anchor[rj] = anc_rj
-        else:
-            # If we can't find a distinct right anchor, still wire the left anchor for cross-doc highlighting.
-            right_add_to_left_anchor[rj] = anc_li
+            right_add_to_right_anchor[rj] = int(anc_rj)
 
     return left_addition_anchor, right_add_to_left_anchor, right_add_to_right_anchor
 
@@ -645,6 +706,8 @@ def _render_left(
         links, left_color = _link_map_for_pair(b)
         # Build anchor maps (so additions snap to anchors)
         left_add_anchor, right_add_to_left_anchor, right_add_to_right_anchor = _build_addition_anchors(b)
+        # We also need "where does a LEFT anchor point on the RIGHT?" → use entailment map
+        ent_L_to_R, _ent_R_to_L = _entailment_maps(b)
 
         # Build a set of left indices that serve as anchors for additions (neutral)
         anchor_left_idxs = set()
@@ -694,11 +757,8 @@ def _render_left(
                 # Decide if THIS left span is an addition and compute anchors
                 is_add = i1 in left_add_anchor
                 anc_li = left_add_anchor.get(i1)
-                # Right anchor index by matching anchor text on B
-                anc_rj = None
-                if anc_li is not None:
-                    anchor_text = _get_claim_text(out1[anc_li])
-                    anc_rj = idx2.get(anchor_text)
+                # Right anchor index for this left anchor (prefer entailing mate)
+                anc_rj = ent_L_to_R.get(anc_li) if anc_li is not None else None
 
                 # Cross-doc mate target:
                 # - for additions → point to RIGHT *anchor* if available
@@ -837,11 +897,12 @@ def _embed_right_claims_in_paragraph(
             is_add = lbl in ("neutral","addition")
             if is_add:
                 extras.append('data-kind="addition"')
-                # If we know a specific left anchor for this right addition → override target to that left anchor
-                if anchor_idx_for_right and j_hit in anchor_idx_for_right:
-                    li_anchor = anchor_idx_for_right[j_hit]
-                    target_attr = f' data-target="L-{k}-{li_anchor}"'
+                # left anchor (cross-doc): if known, point to it and store for JS highlight
+                if (anchor_idx_for_right and j_hit in anchor_idx_for_right):
+                    const_li_anchor = anchor_idx_for_right[j_hit]
+                    target_attr = f' data-target="L-{k}-{const_li_anchor}"'
                     hcolor_attr = f' data-hcolor="{_hover_color("entailment")}"'
+                    extras.append(f'data-lanchor="L-{k}-{const_li_anchor}"')
                 # Right in-pane anchor (same text claim on B)
                 if anchor_text_for_right and j_hit in anchor_text_for_right:
                     anc_txt = anchor_text_for_right[j_hit]
@@ -944,12 +1005,27 @@ def _render_right_col(
     paragraph_b = _text_right(b)
     # Build addition anchors so right additions can carry both left & right anchors
     left_add_anchor, right_add_to_left_anchor, right_add_to_right_anchor = _build_addition_anchors(b)
-    # For the embedder, pass left-anchor index map and the exact anchor text (so it can locate the right in-pane anchor)
+    # For the embedder, pass:
+    #   - left anchor indices for cross-doc target + data-lanchor
+    #   - the exact right anchor TEXT (so it can locate the right in-pane anchor by text)
     anchor_text_for_right: Dict[int, str] = {}
     out1 = b.get("output_1") or []
+    out2 = b.get("output_2") or []
+    # Prefer *right* anchor when we have one (closest green in B); else fall back to the entailing mate of the left anchor
+    for rj, anc_rj in (right_add_to_right_anchor or {}).items():
+        if 0 <= anc_rj < len(out2):
+            anchor_text_for_right[rj] = _get_claim_text(out2[anc_rj])
+    if anchor_text_for_right:
+        pass
+    # Fill remaining with entailing right of the left anchor (if any)
+    ent_L_to_R, _ = _entailment_maps(b)
     for rj, li_anchor in (right_add_to_left_anchor or {}).items():
-        if 0 <= li_anchor < len(out1):
-            anchor_text_for_right[rj] = _get_claim_text(out1[li_anchor])
+        if rj in anchor_text_for_right:
+            continue
+        if li_anchor in ent_L_to_R:
+            aj = ent_L_to_R[li_anchor]
+            if 0 <= aj < len(out2):
+                anchor_text_for_right[rj] = _get_claim_text(out2[aj])
 
     claims_body = _embed_right_claims_in_paragraph(
         paragraph_b,
@@ -959,8 +1035,8 @@ def _render_right_col(
         best_for_right,
         target_right_idx,
         (contra_terms or {}),
-        anchor_idx_for_right=right_add_to_left_anchor,
-        anchor_text_for_right=anchor_text_for_right,
+        anchor_idx_for_right=right_add_to_left_anchor,  # for data-lanchor + cross-doc target
+        anchor_text_for_right=anchor_text_for_right,    # for data-ranchor (in-pane)
     )
 
     hdr = f"Document B — claims (pair {k+1})"
