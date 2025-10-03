@@ -30,8 +30,8 @@ def run_llm_nli_file(
     *,
     output_path: str | Path | None = None,
     system_prompt: str = "",
-    model_name: str = "gpt-4o-mini",
-    temperature: float = 0.2,
+    model_name: str = "gpt-4o",
+    temperature: float = 0.01,
     label_map: Dict[str, str] | None = None,
 ) -> Path:
     """Synchronous wrapper that delegates to async, keeping UI stable."""
@@ -200,8 +200,8 @@ async def run_llm_nli_file_async(
     *,
     output_path: str | Path | None = None,
     system_prompt: str = "",
-    model_name: str = "gpt-4o-mini",
-    temperature: float = 0.2,
+    model_name: str = "gpt-4o",
+    temperature: float = 0.01,
     label_map: Dict[str, str] | None = None,
     max_concurrency: int = 8,
 ) -> Path:

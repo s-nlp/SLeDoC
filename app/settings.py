@@ -113,9 +113,11 @@ BASE_CSS = """
   filter:grayscale(.25) saturate(.2) brightness(.85);
   transition:opacity .12s ease, filter .12s ease;
 }
-/* Force-anchor highlight used on addition click */
-.anchor-hl{ background: rgba(34,197,94,.35) !important; }  /* strong green on demand */
-/* Optional: make bracketed anchors a bit tighter */
+/* Force-anchor highlight (color set via --anchor-color; brackets handled in EXTRA_CSS) */
+.anchor-hl{
+  background:transparent !important;
+  outline:2px solid var(--anchor-color, #16a34a) !important;
+}
 .anchor-inline{ padding:0 2px; border-radius:4px; }
 
 /* Simple badge */
@@ -185,7 +187,10 @@ CUSTOM_JS = """
   };
 
   const clearSelection = () => {
-    qa('span.hl.selected, span.hl.dimmed, span.hl.anchor-hl').forEach(el => el.classList.remove('selected','dimmed','anchor-hl'));
+    qa('span.hl.selected, span.hl.dimmed, span.hl.anchor-hl').forEach(el => {
+      el.classList.remove('selected','dimmed','anchor-hl');
+      el.style.removeProperty('--anchor-color');
+    });
     qa('span.hl').forEach(el => {
       const bg = ('_bg' in el.dataset) ? el.dataset._bg : '';
       el.style.backgroundColor = bg || '';
@@ -193,6 +198,14 @@ CUSTOM_JS = """
     });
     if (confBox()) confBox().textContent = 'Confidence: -';
   };
+
+  /* Color + bracket an anchor with its own label color (or mate color) */
+  function forceAnchor(el){
+    if (!el) return;
+    const col = el.dataset.selfcolor || el.dataset.hcolor || '#16a34a';
+    el.style.setProperty('--anchor-color', col);
+    el.classList.add('anchor-hl');
+  }
 
   /* span dimming in LEFT pane */
   function dimLeftSpansExcept(keepIds = []) {
@@ -306,9 +319,7 @@ CUSTOM_JS = """
           mate.classList.add('selected');
           mate.style.outline = '2px solid #000';
           // If LEFT click was on an "addition" span, force its mate (anchor) to green
-          if (span.dataset.kind === 'addition') {
-            mate.classList.add('anchor-hl');
-          }
+          if (span.dataset.kind === 'addition') forceAnchor(mate);
         }
       }
       // build "keep bright" set for left spans (clicked + its left-anchor if addition)
@@ -326,16 +337,10 @@ CUSTOM_JS = """
       // force-highlight the LEFT in-pane anchor when present
       if (span.dataset.kind === 'addition') {
         const la = span.dataset.lanchor;
-        if (la) {
-          const lEl = q('#' + CSS.escape(la));
-          if (lEl) lEl.classList.add('anchor-hl');
-        }
+        if (la) forceAnchor(q('#' + CSS.escape(la)));
         // And the RIGHT in-pane anchor when present (if we clicked a left span and it embeds right anchors too)
         const ra = span.dataset.ranchor;
-        if (ra) {
-          const rEl = q('#' + CSS.escape(ra));
-          if (rEl) rEl.classList.add('anchor-hl');
-        }
+        if (ra) forceAnchor(q('#' + CSS.escape(ra)));
       }
 
       const pidx = parseInt(span.getAttribute('data-pair') || '0', 10);
@@ -364,24 +369,16 @@ CUSTOM_JS = """
           mate.classList.add('selected');
           mate.style.outline = '2px solid #000';
           // If RIGHT click was on an "addition" span, force its mate (anchor) to green
-          if (span.dataset.kind === 'addition') {
-            mate.classList.add('anchor-hl');
-          }
+          if (span.dataset.kind === 'addition') forceAnchor(mate);
         }
       }
       // force-highlight the RIGHT in-pane anchor (anchor claim on the same B paragraph)
       if (span.dataset.kind === 'addition') {
         const ra = span.dataset.ranchor;
-        if (ra) {
-          const rEl = q('#' + CSS.escape(ra));
-          if (rEl) rEl.classList.add('anchor-hl');
-        }
+        if (ra) forceAnchor(q('#' + CSS.escape(ra)));
         // And the LEFT in-pane anchor (when addition is on the right)
         const la = span.dataset.lanchor;
-        if (la) {
-          const lEl = q('#' + CSS.escape(la));
-          if (lEl) lEl.classList.add('anchor-hl');
-        }
+        if (la) forceAnchor(q('#' + CSS.escape(la)));
       }
 
       const pidx = parseInt(span.getAttribute('data-pair') || '0', 10);

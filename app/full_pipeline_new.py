@@ -70,14 +70,18 @@ EXTRA_CSS = (
 .contra-term{ background: #fff59a; padding:0 2px; border-radius:3px; }
 
 /* selected state: strong outline, keep original background color */
-.hl.selected { outline:2px solid #000 !important; }
+.hl.selected { outline:2px solid #000 }
 
 /* mute tooltip artifacts — but keep ::after available for anchors */
 .hl:not(.anchor-hl)::after { display:none !important; }
 
-/* show brackets only while an anchor is force-highlighted */
-.hl.anchor-hl::before { content:"["; }
-.hl.anchor-hl::after  { content:"]"; display:inline; }
+/* colored, bracketed anchors on demand (color via --anchor-color set by JS) */
+.hl.anchor-hl{
+  background:transparent !important;
+  outline:2px solid var(--anchor-color, #16a34a) !important;
+}
+.hl.anchor-hl::before { content:"["; color:var(--anchor-color, #16a34a); font-weight:700; }
+.hl.anchor-hl::after  { content:"]"; color:var(--anchor-color, #16a34a); font-weight:700; display:inline; }
 
 /* make the right column cards use the same vertical spacing as the left */
 .mirror-box{
@@ -393,53 +397,61 @@ def _build_addition_anchors(
             continue
         prem = str(r.get("premise_raw") or r.get("premise") or "")
         hyp  = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
-        # map to indices (handle swapped order)
-        li = idx1.get(prem); rj = idx2.get(hyp)
-        if li is None or rj is None:
-            li = idx1.get(hyp); rj = idx2.get(prem)
-        if li is None or rj is None:
+        # Robust mapping: either side may be empty / swapped for additions
+        li = idx1.get(prem) if prem in idx1 else (idx1.get(hyp) if hyp in idx1 else None)
+        rj = idx2.get(hyp)  if hyp  in idx2 else (idx2.get(prem) if prem in idx2 else None)
+        if li is None and rj is None:
             continue
 
         anc_li: Optional[int] = r.get("anchor")
         if not isinstance(anc_li, int) or not (0 <= int(anc_li) < len(out1)):
             anc_li = None
 
-        # 1) prefer explicit left anchor from the LLM
-        # 2) else: if current right span has an entailing left → use that
-        if anc_li is None:
+        # 1) prefer explicit LLM-provided anchor
+        # 2) else: if THIS right span entails a left → use that
+        if anc_li is None and rj is not None:
             anc_li = ent_R_to_L.get(rj)
 
-        # 3) else: choose the CLOSEST entailing right (prefer previous), and use *its* left mate
+        # 3) else: choose the CLOSEST entailing right — prefer previous; if none, take next
         if anc_li is None and ent_right_idxs_sorted:
-            # previous
-            prevs = [x for x in ent_right_idxs_sorted if x < rj]
-            nexts = [x for x in ent_right_idxs_sorted if x > rj]
+            prevs = [x for x in ent_right_idxs_sorted if (rj is None or x < rj)]
+            nexts = [x for x in ent_right_idxs_sorted if (rj is None or x > rj)]
             j0 = prevs[-1] if prevs else (nexts[0] if nexts else None)
             if j0 is not None:
                 anc_li = ent_R_to_L.get(j0)
-                # also keep that right j0 as the right-side in-pane anchor
+                # also keep that RIGHT j0 as the right-side in-pane anchor
                 if anc_li is not None:
-                    right_add_to_right_anchor[rj] = j0
+                    right_add_to_right_anchor[rj if rj is not None else j0] = j0
 
-        # 4) last resort: pick the closest left span (prefer previous)
+        # 4) last resort: pick the closest LEFT span.
+        #    If the addition is the FIRST sentence → pick the NEXT one.
         if anc_li is None and out1:
-            anc_li = max(0, min(li - 1, len(out1) - 1))
+            if li is not None:
+                if li > 0:
+                    anc_li = li - 1
+                elif li + 1 < len(out1):
+                    anc_li = li + 1
+                else:
+                    anc_li = 0
+            else:
+                # no left mapping at all: prefer index 1 if exists (treat as "first addition")
+                anc_li = 1 if len(out1) > 1 else 0
 
         # Decide right-side anchor to show in-pane (prefer the entailing mate of anc_li)
         anc_rj: Optional[int] = None
         if anc_li is not None and anc_li in ent_L_to_R:
             anc_rj = ent_L_to_R[anc_li]
         # if not found yet but we left a right-side anchor above, keep it
-        if anc_rj is None and rj in right_add_to_right_anchor:
+        if anc_rj is None and rj is not None and rj in right_add_to_right_anchor:
             anc_rj = right_add_to_right_anchor[rj]
 
         # Heuristic: if left index differs from its anchor index, treat that left span as "addition".
-        if anc_li is not None and li != anc_li:
+        # Mark mappings
+        if anc_li is not None and li is not None and li != anc_li:
             left_addition_anchor[li] = int(anc_li)
-        # If right claim isn't itself the anchor claim, treat it as "addition".
-        if anc_li is not None:
+        if anc_li is not None and rj is not None:
             right_add_to_left_anchor[rj] = int(anc_li)
-        if anc_rj is not None and anc_rj != rj:
+        if anc_rj is not None and rj is not None and anc_rj != rj:
             right_add_to_right_anchor[rj] = int(anc_rj)
 
     return left_addition_anchor, right_add_to_left_anchor, right_add_to_right_anchor
@@ -501,7 +513,7 @@ async def _llm_contra_terms_async(
         resp = await client.chat.completions.create(
             model=mid,
             messages=[{"role": "user", "content": prompt}],
-            temperature=0,
+            temperature=0.01,
             response_format={"type": "json_object"},
         )
         data = json.loads(resp.choices[0].message.content)
@@ -753,6 +765,7 @@ def _render_left(
                 # NLI color for the left span (worst label among its links)
                 worst_lbl = (left_color.get(i1, "") or "").lower()
                 cls = "hl " + worst_lbl
+                self_col = _hover_color(worst_lbl)
 
                 # Decide if THIS left span is an addition and compute anchors
                 is_add = i1 in left_add_anchor
@@ -783,7 +796,7 @@ def _render_left(
                 extra_attr = (" " + " ".join(extras)) if extras else ""
 
                 spans.append(
-                    f'<span id="L-{pi}-{i1}" class="{cls}" data-pair="{pi}" data-left="{i1}"{target_attr}{hcolor_attr}{extra_attr}>{txt}</span>'
+                    f'<span id="L-{pi}-{i1}" class="{cls}" data-pair="{pi}" data-left="{i1}" data-selfcolor="{self_col}"{target_attr}{hcolor_attr}{extra_attr}>{txt}</span>'
                 )
             inner = "<br>".join(spans)
         else:
@@ -882,6 +895,7 @@ def _embed_right_claims_in_paragraph(
             cls = "hl " + (
                 lbl if lbl in ("contradiction", "neutral", "entailment") else ""
             )
+            self_col = _hover_color(lbl or "neutral")
 
             li_for_j = best_for_right.get(j_hit)
             if li_for_j:
@@ -928,7 +942,7 @@ def _embed_right_claims_in_paragraph(
                 out.append(_escape(seg))
             else:
                 out.append(
-                    f'<span id="R-{k}-{j_hit}" class="{cls}" data-pair="{k}" data-right="{j_hit}"{target_attr}{hcolor_attr}{kind_attr}>{inner}</span>'
+                    f'<span id="R-{k}-{j_hit}" class="{cls}" data-pair="{k}" data-right="{j_hit}" data-selfcolor="{self_col}"{target_attr}{hcolor_attr}{kind_attr}>{inner}</span>'
                 )
                 used.add(j_hit)
         else:
