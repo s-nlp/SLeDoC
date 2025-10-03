@@ -106,6 +106,10 @@ BASE_CSS = """
 .hl.dimmed{
   filter:saturate(.3) brightness(.95);
 }
+/* Force-anchor highlight used on addition click */
+.anchor-hl{ background: rgba(34,197,94,.35) !important; }  /* strong green on demand */
+/* Optional: make bracketed anchors a bit tighter */
+.anchor-inline{ padding:0 2px; border-radius:4px; }
 
 /* Simple badge */
 /* Badge styles: inline-block, small padding, fully rounded, small font */
@@ -174,7 +178,7 @@ CUSTOM_JS = """
   };
 
   const clearSelection = () => {
-    qa('span.hl.selected, span.hl.dimmed').forEach(el => el.classList.remove('selected','dimmed'));
+    qa('span.hl.selected, span.hl.dimmed, span.hl.anchor-hl').forEach(el => el.classList.remove('selected','dimmed','anchor-hl'));
     qa('span.hl').forEach(el => {
       const bg = ('_bg' in el.dataset) ? el.dataset._bg : '';
       el.style.backgroundColor = bg || '';
@@ -274,6 +278,10 @@ CUSTOM_JS = """
         if (mate) {
           mate.classList.add('selected');
           mate.style.outline = '2px solid #000';
+          // If LEFT click was on an "addition" span, force its mate (anchor) to green
+          if (span.dataset.kind === 'addition') {
+            mate.classList.add('anchor-hl');
+          }
         }
       }
 
@@ -302,6 +310,10 @@ CUSTOM_JS = """
         if (mate) {
           mate.classList.add('selected');
           mate.style.outline = '2px solid #000';
+          // If RIGHT click was on an "addition" span, force its mate (anchor) to green
+          if (span.dataset.kind === 'addition') {
+            mate.classList.add('anchor-hl');
+          }
         }
       }
 

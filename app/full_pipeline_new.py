@@ -608,7 +608,8 @@ def _render_left(
                     txt = _escape(raw)
 
                 # NLI color for the left span (worst label among its links)
-                cls = "hl " + (left_color.get(i1, "") or "")
+                worst_lbl = (left_color.get(i1, "") or "").lower()
+                cls = "hl " + worst_lbl
 
                 # add target/hcolor so left can point to right
                 target_attr = (
@@ -619,9 +620,10 @@ def _render_left(
                     if best_r is not None
                     else ""
                 )
-
+                # If the best link for this left span is neutral → mark as "addition"
+                kind_attr = ' data-kind="addition"' if best_lbl == "neutral" else ""
                 spans.append(
-                    f'<span id="L-{pi}-{i1}" class="{cls}" data-pair="{pi}" data-left="{i1}"{target_attr}{hcolor_attr}>{txt}</span>'
+                    f'<span id="L-{pi}-{i1}" class="{cls}" data-pair="{pi}" data-left="{i1}"{target_attr}{hcolor_attr}{kind_attr}>{txt}</span>'
                 )
             inner = "<br>".join(spans)
         else:
@@ -667,6 +669,8 @@ def _embed_right_claims_in_paragraph(
     best_for_right: Dict[int, Tuple[int, str]],
     target_right_idx: Optional[int],
     contra_terms: Optional[Dict[str, List[str]]],
+    anchor_idx_for_right: Optional[Dict[int, int]] = None,
+    anchor_text_for_right: Optional[Dict[int, str]] = None,
 ) -> str:
     """
     Return the FULL Document B paragraph with all right-claims embedded in-place
@@ -723,6 +727,9 @@ def _embed_right_claims_in_paragraph(
                 target_attr = ""
                 hcolor_attr = f' data-hcolor="{_hover_color(lbl or "neutral")}"'
 
+            # Tag additions so JS can force-highlight the anchor mate on click
+            kind_attr = ' data-kind="addition"' if lbl == "neutral" else ""
+
             # If this is the specific right claim we're focusing on, inject contradicting terms
             if (
                 (target_right_idx is not None)
@@ -735,12 +742,36 @@ def _embed_right_claims_in_paragraph(
             else:
                 inner = _escape(seg)
 
+            # If this right-claim is an addition and we know its anchor on the LEFT,
+            # render the anchor in GREEN, wrapped in [square brackets], right before the addition.
+            if lbl == "neutral":
+                if anchor_idx_for_right and j_hit in anchor_idx_for_right:
+                    aidx = anchor_idx_for_right[j_hit]
+                    # target back to the left anchor span
+                    anchor_id = f"L-{k}-{aidx}"
+                    atext = ""
+                    if anchor_text_for_right:
+                        atext = anchor_text_for_right.get(j_hit, "") or ""
+                    # fallback to raw left span text by index, if not provided
+                    if not atext:
+                        # (we don't have out1 here; anchor_text_for_right is preferred)
+                        pass
+                    if atext:
+                        anchor_html = (
+                            f'[<span class="hl entailment anchor-inline" '
+                            f'data-pair="{k}" data-left="{aidx}" '
+                            f'data-target="R-{k}-{j_hit}" '
+                            f'data-hcolor="{_hover_color("entailment")}" '
+                            f'id="{anchor_id}">{_escape(atext)}</span>] '
+                        )
+                        inner = anchor_html + inner
+
             # Only wrap the first occurrence of each claim to avoid duplicates
             if j_hit in used:
                 out.append(_escape(seg))
             else:
                 out.append(
-                    f'<span id="R-{k}-{j_hit}" class="{cls}" data-pair="{k}" data-right="{j_hit}"{target_attr}{hcolor_attr}>{inner}</span>'
+                    f'<span id="R-{k}-{j_hit}" class="{cls}" data-pair="{k}" data-right="{j_hit}"{target_attr}{hcolor_attr}{kind_attr}>{inner}</span>'
                 )
                 used.add(j_hit)
         else:
@@ -813,24 +844,37 @@ def _render_right_col(
             if prev is None or severity.get(lbl, 0) > severity.get(prev[1], 0):
                 best_for_right[rj] = (i_left, lbl)
 
-    # Optional anchor indicators (for neutral/addition with anchor on left)
-    anchor_for_right: Dict[int, str] = {}
+    # Build ANCHOR maps for neutrals (additions):
+    #  - anchor_idx_for_right[j] = i (left index acting as anchor for right addition j)
+    #  - anchor_text_for_right[j] = anchor text (for bracket rendering)
+    anchor_idx_for_right: Dict[int, int] = {}
+    anchor_text_for_right: Dict[int, str] = {}
+    idx1 = _index_claims(b.get("output_1") or [])
+    idx2 = _index_claims(b.get("output_2") or [])
+
     for rr in b.get("nli_results") or []:
         lblr = str(rr.get("label") or "").lower()
         if lblr in ("neutral", "addition"):
+            prem = str(rr.get("premise_raw") or rr.get("premise") or "")
             hyp = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
-            anc = rr.get("anchor")
-            if anc is None:
-                continue
-            for jj, cc in enumerate(out2):
-                txtj = str(cc.get("claim") or cc.get("input") or "")
-                if txtj.strip() == hyp.strip():
-                    if "output_1" in b:
-                        raw_anchor = (b.get("output_1") or [])[anc]
-                        anchor_for_right[jj] = str(
-                            raw_anchor.get("claim") or raw_anchor.get("input") or ""
-                        )
-                    break
+            i_li = idx1.get(prem)
+            j_rj = idx2.get(hyp)
+
+            # Support explicit 'anchor' from LLM (index of LEFT anchor), else fallback to i_li
+            # If user prompt returns {"anchor": <left_idx>} — we'll trust it.
+            anc_idx = rr.get("anchor")
+            if isinstance(anc_idx, int) and 0 <= anc_idx < len(b.get("output_1") or []):
+                left_anchor_idx = anc_idx
+            else:
+                left_anchor_idx = i_li if i_li is not None else None
+
+            if (left_anchor_idx is not None) and (j_rj is not None):
+                anchor_idx_for_right[j_rj] = left_anchor_idx
+                # text of the anchor for bracket
+                raw_anchor = (b.get("output_1") or [])[left_anchor_idx]
+                anchor_text_for_right[j_rj] = str(
+                    raw_anchor.get("claim") or raw_anchor.get("input") or ""
+                )
 
     # FULL paragraph of Document B with right-claims embedded in-place (preserve order)
     paragraph_b = _text_right(b)
@@ -842,6 +886,8 @@ def _render_right_col(
         best_for_right,
         target_right_idx,
         (contra_terms or {}),
+        anchor_idx_for_right,
+        anchor_text_for_right,
     )
 
     hdr = f"Document B — claims (pair {k+1})"
@@ -1182,11 +1228,6 @@ with gr.Blocks(
                             dl_pairs = gr.File(
                                 label="Download pairs.json", interactive=False
                             )
-                            # Labeled spans export (CSV)
-                            make_labels_btn = gr.Button("Build labeled spans CSV")
-                            dl_labels = gr.DownloadButton(
-                                label="Download labeled_spans.csv", visible=True
-                            )
                         with gr.Row():
                             artifacts_json = gr.JSON(label="Artifacts", visible=False)
             with gr.Column(scale=1):
@@ -1213,6 +1254,11 @@ with gr.Blocks(
                 label="Show Document B for paragraph…",
                 interactive=True,
             )
+            # Small download button right under the picker
+            dl_labels_json = gr.DownloadButton(
+                label="Download labeled_spans.json", size="sm"
+            )
+
             # bridge for click events
             bridge_click = gr.Textbox(visible=False, elem_id="bridge_click")
 
@@ -1312,17 +1358,11 @@ with gr.Blocks(
                     return gr.update(visible=False)
                 return gr.update(value=p, visible=True)
 
-            run_btn.click(_export, inputs=pairs_path_state, outputs=dl_pairs)
-
-            # Build CSV of labeled spans from pairs_state
-            def _build_labeled_spans_csv(pairs):
-                import csv
-                import tempfile
-
+            def _build_labeled_spans_json(pairs):
                 if not pairs:
-                    return gr.update(visible=False)
+                    return gr.update(visible=True)
                 tmpdir = Path(tempfile.mkdtemp())
-                outp = tmpdir / "labeled_spans.csv"
+                outp = tmpdir / "labeled_spans.json"
                 rows = []
                 for k, b in enumerate(pairs or []):
                     out1 = b.get("output_1") or []
@@ -1351,39 +1391,24 @@ with gr.Blocks(
                         else:
                             left_span, right_span = prem, hyp
                         rows.append(
-                            [
-                                k + 1,  # pair_index (1-based)
-                                li if li is not None else "",  # left_idx
-                                rj if rj is not None else "",  # right_idx
-                                left_span,
-                                right_span,
-                                lbl,
-                                expl,
-                                parA,
-                                parB,
-                            ]
+                            {
+                                "pair_index": k + 1,
+                                "left_idx": li if li is not None else None,
+                                "right_idx": rj if rj is not None else None,
+                                "left_span": left_span,
+                                "right_span": right_span,
+                                "label": lbl,
+                                "explanation": expl,
+                                "paragraph_A": parA,
+                                "paragraph_B": parB,
+                            }
                         )
-                with outp.open("w", newline="", encoding="utf-8-sig") as f:
-                    wr = csv.writer(f)
-                    wr.writerow(
-                        [
-                            "pair_index",
-                            "left_idx",
-                            "right_idx",
-                            "left_span",
-                            "right_span",
-                            "label",
-                            "explanation",
-                            "paragraph_A",
-                            "paragraph_B",
-                        ]
-                    )
-                    wr.writerows(rows)
+                outp.write_text(
+                    json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
                 return str(outp)
 
-            make_labels_btn.click(
-                _build_labeled_spans_csv, inputs=[pairs_state], outputs=dl_labels
-            )
+            run_btn.click(_export, inputs=pairs_path_state, outputs=dl_pairs)
 
             pair_picker.change(
                 _on_pick,
@@ -1395,6 +1420,11 @@ with gr.Blocks(
                 _bridge_combo,
                 inputs=[pairs_state, bridge_click, use_llm_contra, contra_model],
                 outputs=[left_html, right_html, reason_html, pair_picker],
+            )
+
+            # Wire the download button to build JSON from pairs_state on click
+            dl_labels_json.click(
+                _build_labeled_spans_json, inputs=[pairs_state], outputs=dl_labels_json
             )
 
 # Fast launch guard
