@@ -107,6 +107,12 @@ BASE_CSS = """
 .hl.dimmed{
   filter:saturate(.3) brightness(.95);
 }
+/* Stronger, visible dimming only in the left pane */
+#left_pane .hl.dimmed{
+  opacity:.35;
+  filter:grayscale(.25) saturate(.2) brightness(.85);
+  transition:opacity .12s ease, filter .12s ease;
+}
 /* Force-anchor highlight used on addition click */
 .anchor-hl{ background: rgba(34,197,94,.35) !important; }  /* strong green on demand */
 /* Optional: make bracketed anchors a bit tighter */
@@ -154,8 +160,8 @@ CUSTOM_JS = """
   const q      = (sel) => root().querySelector(sel);
   const qa     = (sel) => root().querySelectorAll(sel);
 
-  /* Which left paragraph (pair) is focused */
-  const current = { idx: null };
+  /* Which left paragraph (pair) is focused + which left spans must stay bright */
+  const current = { idx: null, keepIds: [] };
 
   /* ===== Visual helpers (hover + selection) ===== */
   const confBox = () => q('#conf_box');
@@ -188,6 +194,21 @@ CUSTOM_JS = """
     if (confBox()) confBox().textContent = 'Confidence: -';
   };
 
+  /* span dimming in LEFT pane */
+  function dimLeftSpansExcept(keepIds = []) {
+    const keep = new Set(keepIds);
+    qa('#left_pane .hl').forEach(el => {
+      if (keep.has(el.id)) {
+        el.classList.remove('dimmed');
+      } else {
+        el.classList.add('dimmed');
+      }
+    });
+  }
+  function clearLeftSpanDimming(){
+    qa('#left_pane .hl.dimmed').forEach(el => el.classList.remove('dimmed'));
+  }
+
   /* ===== Paragraph dimming (left pane) ===== */
   function dimParagraphs(idx){
     if (idx == null) return;
@@ -206,13 +227,18 @@ CUSTOM_JS = """
     qa('#left_pane .para-box').forEach(pb => pb.classList.remove('para-dim','para-focus'));
   }
 
-  /* Reapply dimming after Gradio re-renders the left HTML */
+  /* Reapply paragraph + span dimming after Gradio re-renders the left HTML */
   (function observeLeftRepaints(){
     const L = q('#left_pane');
     if (!L || !('MutationObserver' in window)) return;
     const obs = new MutationObserver(() => {
       // DOM replaced → reapply dimming for the current idx (if any)
       if (current.idx != null) dimParagraphs(current.idx);
+      // Reapply span dimming (clicked set) after repaint
+      if (current.keepIds && current.keepIds.length){
+        // ensure content is present before applying
+        setTimeout(() => dimLeftSpansExcept(current.keepIds), 0);
+      }
     });
     obs.observe(L, { childList: true, subtree: true, characterData: true });
   })();
@@ -285,6 +311,32 @@ CUSTOM_JS = """
           }
         }
       }
+      // build "keep bright" set for left spans (clicked + its left-anchor if addition)
+      const keep = [span.id];
+      if (span.dataset.kind === 'addition' && span.dataset.lanchor) {
+        keep.push(span.dataset.lanchor);
+        // also green the left in-pane anchor itself
+        const lEl = q('#' + CSS.escape(span.dataset.lanchor));
+        if (lEl) lEl.classList.add('anchor-hl');
+      }
+      // Dim all other LEFT spans + remember this set for re-renders
+      dimLeftSpansExcept(keep);
+      current.keepIds = keep.slice();
+
+      // force-highlight the LEFT in-pane anchor when present
+      if (span.dataset.kind === 'addition') {
+        const la = span.dataset.lanchor;
+        if (la) {
+          const lEl = q('#' + CSS.escape(la));
+          if (lEl) lEl.classList.add('anchor-hl');
+        }
+        // And the RIGHT in-pane anchor when present (if we clicked a left span and it embeds right anchors too)
+        const ra = span.dataset.ranchor;
+        if (ra) {
+          const rEl = q('#' + CSS.escape(ra));
+          if (rEl) rEl.classList.add('anchor-hl');
+        }
+      }
 
       const pidx = parseInt(span.getAttribute('data-pair') || '0', 10);
       const lidx = span.getAttribute('data-left');
@@ -317,6 +369,20 @@ CUSTOM_JS = """
           }
         }
       }
+      // force-highlight the RIGHT in-pane anchor (anchor claim on the same B paragraph)
+      if (span.dataset.kind === 'addition') {
+        const ra = span.dataset.ranchor;
+        if (ra) {
+          const rEl = q('#' + CSS.escape(ra));
+          if (rEl) rEl.classList.add('anchor-hl');
+        }
+        // And the LEFT in-pane anchor (when addition is on the right)
+        const la = span.dataset.lanchor;
+        if (la) {
+          const lEl = q('#' + CSS.escape(la));
+          if (lEl) lEl.classList.add('anchor-hl');
+        }
+      }
 
       const pidx = parseInt(span.getAttribute('data-pair') || '0', 10);
       const ridx = span.getAttribute('data-right');
@@ -333,7 +399,10 @@ CUSTOM_JS = """
       const idx = parseInt(para.getAttribute('data-idx') || '0', 10);
       if (sendBridge(`P:${idx}`)) {
         current.idx = idx;
-        dimParagraphs(current.idx);   // ← NEW: only dim, no scroll, no float
+        dimParagraphs(current.idx);   // only dim, no scroll, no float
+        // Clear span dimming if user clicks the card background
+        clearLeftSpanDimming();
+        current.keepIds = [];
       }
     }
   }, {capture:true});
@@ -347,6 +416,8 @@ CUSTOM_JS = """
     } else {
       current.idx = null;
       clearParagraphDimming();
+      clearLeftSpanDimming();
+      current.keepIds = [];
     }
   }, {capture:true});
 }

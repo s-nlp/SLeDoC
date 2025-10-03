@@ -326,6 +326,62 @@ def _index_claims(claims: List[Dict[str, Any]]) -> Dict[str, int]:
             idx[s] = i
     return idx
 
+def _get_claim_text(claim: Dict[str, Any]) -> str:
+    return str(claim.get("claim") or claim.get("input") or "").strip()
+
+def _build_addition_anchors(
+    block: Dict[str, Any]
+) -> Tuple[Dict[int, int], Dict[int, int], Dict[int, int]]:
+    """
+    Returns three maps:
+      1) left_addition_anchor[left_idx] -> left_anchor_idx
+      2) right_addition_to_left_anchor[right_idx] -> left_anchor_idx
+      3) right_addition_to_right_anchor[right_idx] -> right_anchor_idx (if anchor text exists on B)
+    We use:
+      - r['anchor'] when present (index into left/output_1),
+      - fallback: treat the matched left span as anchor,
+      - and try to find the *same* anchor text among right/output_2 claims.
+    """
+    out1 = block.get("output_1") or []
+    out2 = block.get("output_2") or []
+    idx1 = _index_claims(out1)
+    idx2 = _index_claims(out2)
+
+    left_addition_anchor: Dict[int, int] = {}
+    right_add_to_left_anchor: Dict[int, int] = {}
+    right_add_to_right_anchor: Dict[int, int] = {}
+
+    for r in block.get("nli_results") or []:
+        lbl = str(r.get("label") or "").lower()
+        if lbl not in ("neutral", "addition"):
+            continue
+        prem = str(r.get("premise_raw") or r.get("premise") or "")
+        hyp  = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+        # map to indices (handle swapped order)
+        li = idx1.get(prem); rj = idx2.get(hyp)
+        if li is None or rj is None:
+            li = idx1.get(hyp); rj = idx2.get(prem)
+        if li is None or rj is None:
+            continue
+
+        anc_li = r.get("anchor")
+        if not isinstance(anc_li, int) or not (0 <= anc_li < len(out1)):
+            anc_li = li
+        anchor_text = _get_claim_text(out1[anc_li])
+        anc_rj = idx2.get(anchor_text, None)
+
+        # Heuristic: if left index differs from its anchor index, treat that left span as "addition".
+        if li != anc_li:
+            left_addition_anchor[li] = anc_li
+        # If right claim isn't itself the anchor claim, treat it as "addition".
+        if anc_rj is not None and anc_rj != rj:
+            right_add_to_left_anchor[rj]  = anc_li
+            right_add_to_right_anchor[rj] = anc_rj
+        else:
+            # If we can't find a distinct right anchor, still wire the left anchor for cross-doc highlighting.
+            right_add_to_left_anchor[rj] = anc_li
+
+    return left_addition_anchor, right_add_to_left_anchor, right_add_to_right_anchor
 
 # cache to avoid repeat calls for same (left,right)
 _CONTRA_CACHE: Dict[str, Dict[str, List[str]]] = {}
@@ -587,6 +643,8 @@ def _render_left(
     for pi, b in enumerate(blocks):
         out1 = b.get("output_1") or []
         links, left_color = _link_map_for_pair(b)
+        # Build anchor maps (so additions snap to anchors)
+        left_add_anchor, right_add_to_left_anchor, right_add_to_right_anchor = _build_addition_anchors(b)
 
         # Build a set of left indices that serve as anchors for additions (neutral)
         anchor_left_idxs = set()
@@ -633,19 +691,39 @@ def _render_left(
                 worst_lbl = (left_color.get(i1, "") or "").lower()
                 cls = "hl " + worst_lbl
 
-                # add target/hcolor so left can point to right
-                target_attr = (
-                    f' data-target="R-{pi}-{best_r}"' if best_r is not None else ""
-                )
-                hcolor_attr = (
-                    f' data-hcolor="{_hover_color(best_lbl)}"'
-                    if best_r is not None
-                    else ""
-                )
-                # If the best link for this left span is neutral → mark as "addition"
-                kind_attr = ' data-kind="addition"' if best_lbl in ("neutral","addition") else ""
+                # Decide if THIS left span is an addition and compute anchors
+                is_add = i1 in left_add_anchor
+                anc_li = left_add_anchor.get(i1)
+                # Right anchor index by matching anchor text on B
+                anc_rj = None
+                if anc_li is not None:
+                    anchor_text = _get_claim_text(out1[anc_li])
+                    anc_rj = idx2.get(anchor_text)
+
+                # Cross-doc mate target:
+                # - for additions → point to RIGHT *anchor* if available
+                # - otherwise → best_r as before
+                if is_add and anc_rj is not None:
+                    target_attr = f' data-target="R-{pi}-{anc_rj}"'
+                    hcolor_attr = f' data-hcolor="{_hover_color("entailment")}"'
+                else:
+                    target_attr = f' data-target="R-{pi}-{best_r}"' if best_r is not None else ""
+                    hcolor_attr = (
+                        f' data-hcolor="{_hover_color(best_lbl)}"' if best_r is not None else ""
+                    )
+
+                # Addition tagging + intra-doc anchors (left + right) for JS
+                extras = []
+                if is_add:
+                    extras.append('data-kind="addition"')
+                    if anc_li is not None:
+                        extras.append(f'data-lanchor="L-{pi}-{anc_li}"')
+                    if anc_rj is not None:
+                        extras.append(f'data-ranchor="R-{pi}-{anc_rj}"')
+                extra_attr = (" " + " ".join(extras)) if extras else ""
+
                 spans.append(
-                    f'<span id="L-{pi}-{i1}" class="{cls}" data-pair="{pi}" data-left="{i1}"{target_attr}{hcolor_attr}{kind_attr}>{txt}</span>'
+                    f'<span id="L-{pi}-{i1}" class="{cls}" data-pair="{pi}" data-left="{i1}"{target_attr}{hcolor_attr}{extra_attr}>{txt}</span>'
                 )
             inner = "<br>".join(spans)
         else:
@@ -720,6 +798,11 @@ def _embed_right_claims_in_paragraph(
     used: set[int] = set()  # wrap each claim only once
     out: List[str] = []
     last = 0
+    # quick index for right claims by text (case-sensitive trimmed)
+    idx2: Dict[str, int] = {}
+    for j, t in claims:
+        idx2[t] = j
+
     for m in rx.finditer(par_text):
         s, e = m.span()
         if s > last:
@@ -749,8 +832,23 @@ def _embed_right_claims_in_paragraph(
                 target_attr = ""
                 hcolor_attr = f' data-hcolor="{_hover_color(lbl or "neutral")}"'
 
-            # Tag additions so JS can force-highlight the anchor mate on click
-            kind_attr = ' data-kind="addition"' if lbl in ("neutral","addition") else ""
+            # Addition wiring: point to *left* anchor if provided; attach *right* in-pane anchor id.
+            extras = []
+            is_add = lbl in ("neutral","addition")
+            if is_add:
+                extras.append('data-kind="addition"')
+                # If we know a specific left anchor for this right addition → override target to that left anchor
+                if anchor_idx_for_right and j_hit in anchor_idx_for_right:
+                    li_anchor = anchor_idx_for_right[j_hit]
+                    target_attr = f' data-target="L-{k}-{li_anchor}"'
+                    hcolor_attr = f' data-hcolor="{_hover_color("entailment")}"'
+                # Right in-pane anchor (same text claim on B)
+                if anchor_text_for_right and j_hit in anchor_text_for_right:
+                    anc_txt = anchor_text_for_right[j_hit]
+                    r_anchor = idx2.get(anc_txt)
+                    if r_anchor is not None and r_anchor != j_hit:
+                        extras.append(f'data-ranchor="R-{k}-{r_anchor}"')
+            kind_attr = (" " + " ".join(extras)) if extras else ""
 
             # If this is the specific right claim we're focusing on, inject contradicting terms
             if (
@@ -844,6 +942,15 @@ def _render_right_col(
 
     # FULL paragraph of Document B with right-claims embedded in-place (preserve order)
     paragraph_b = _text_right(b)
+    # Build addition anchors so right additions can carry both left & right anchors
+    left_add_anchor, right_add_to_left_anchor, right_add_to_right_anchor = _build_addition_anchors(b)
+    # For the embedder, pass left-anchor index map and the exact anchor text (so it can locate the right in-pane anchor)
+    anchor_text_for_right: Dict[int, str] = {}
+    out1 = b.get("output_1") or []
+    for rj, li_anchor in (right_add_to_left_anchor or {}).items():
+        if 0 <= li_anchor < len(out1):
+            anchor_text_for_right[rj] = _get_claim_text(out1[li_anchor])
+
     claims_body = _embed_right_claims_in_paragraph(
         paragraph_b,
         out2,
@@ -852,6 +959,8 @@ def _render_right_col(
         best_for_right,
         target_right_idx,
         (contra_terms or {}),
+        anchor_idx_for_right=right_add_to_left_anchor,
+        anchor_text_for_right=anchor_text_for_right,
     )
 
     hdr = f"Document B — claims (pair {k+1})"
