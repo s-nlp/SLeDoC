@@ -235,25 +235,65 @@ async def run_llm_nli_file_async(
                     model_name=model_name,
                     temperature=temperature,
                 )
-            # Build record same as sync path
+            # ── Pass 0: index left spans & compute "next left idx" per item ──
+            n = len(items or [])
+            left_idx_by_text: dict[str, int] = {}
+            left_idx_for_item: list[int | None] = [None] * n
+            for i, it in enumerate(items or []):
+                s1 = str(it.get("span_1", "") or "").strip()
+                if not s1:
+                    continue
+                if s1 not in left_idx_by_text:
+                    left_idx_by_text[s1] = len(left_idx_by_text)
+                left_idx_for_item[i] = left_idx_by_text[s1]
+            next_left_idx_from: list[int | None] = [None] * n
+            next_seen: int | None = None
+            for i in range(n - 1, -1, -1):
+                if left_idx_for_item[i] is not None:
+                    next_seen = left_idx_for_item[i]
+                next_left_idx_from[i] = next_seen
+
+            # ── Pass 1: build outputs; anchor ADDITION to NEXT left span ──
             spans1, spans2 = [], []
             seen1, seen2 = set(), set()
+            last_left_idx: int | None = None
             nli_results: List[dict] = []
-            for it in items or []:
+            for i, it in enumerate(items or []):
                 s1 = str(it.get("span_1", "") or "").strip()
                 s2 = str(it.get("span_2", "") or "").strip()
                 lab = str(it.get("label", "") or "").strip().lower()
                 mapped = (label_map or {}).get(lab, None) or {
                     "equivalent": "entailment",
                     "contradiction": "contradiction",
-                    "addition": "neutral",
+                    "addition": "addition",
                 }.get(lab, "neutral")
+
                 if s1 and s1 not in seen1:
+                    # keep stable position of left spans
+                    left_pos = len(spans1)
+                    left_idx_by_text[s1] = left_pos
                     spans1.append({"input": s1, "claim": s1})
                     seen1.add(s1)
+                    last_left_idx = left_pos
                 if s2 and s2 not in seen2:
                     spans2.append({"input": s2, "claim": s2})
                     seen2.add(s2)
+
+                anchor_idx: int | None = None
+                if mapped == "addition":
+                    # 1) try explicit anchor phrase from the LLM
+                    anc_txt = str(it.get("anchor") or "").strip()
+                    if anc_txt and anc_txt in left_idx_by_text:
+                        anchor_idx = left_idx_by_text[anc_txt]
+                    # 2) if we have a left span text, use it
+                    elif s1 and s1 in left_idx_by_text:
+                        anchor_idx = left_idx_by_text[s1]
+                    else:
+                        # 3) prefer NEXT left span; fallback to previous
+                        anchor_idx = next_left_idx_from[i]
+                        if anchor_idx is None:
+                            anchor_idx = last_left_idx
+
                 res = {
                     "premise": s1,
                     "premise_raw": s1,
@@ -262,6 +302,8 @@ async def run_llm_nli_file_async(
                     "label": mapped,
                     "reasoning": it.get("reasoning") or "",
                 }
+                if anchor_idx is not None:
+                    res["anchor"] = anchor_idx  # used by the viewer
                 nli_results.append(res)
             rec = {
                 "input_1": p1,

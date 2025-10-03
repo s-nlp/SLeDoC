@@ -85,6 +85,7 @@ BASE_CSS = """
 /* Background colors for NLI labels: entailment (green), neutral (blue), contradiction (red) */
 .hl.entailment { background: rgba(34,197,94,.18); }
 .hl.neutral { background: rgba(59,130,246,.18); }
+.hl.addition { background: rgba(59,130,246,.18); }
 .hl.contradiction { background: rgba(244,63,94,.18); }
 
 

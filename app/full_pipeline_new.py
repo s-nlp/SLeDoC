@@ -63,7 +63,8 @@ EXTRA_CSS = (
 /* NLI colors — keep them faint */
 .hl.entailment     { background: rgba(34,197,94,.18); }   /* green */
 .hl.neutral        { background: rgba(59,130,246,.18); }  /* blue */
-.hl.contradiction  { background: rgba(244,63,94,.18); }
+.hl.addition { background: rgba(59,130,246,.18); }        /* blue */
+.hl.contradiction  { background: rgba(244,63,94,.18); }   /* red */
 
 /* contradiction term highlight */
 .contra-term{ background: #fff59a; padding:0 2px; border-radius:3px; }
@@ -71,8 +72,12 @@ EXTRA_CSS = (
 /* selected state: strong outline, keep original background color */
 .hl.selected { outline:2px solid #000 !important; }
 
-/* mute tooltip artifacts */
-.hl::after { display:none !important; }
+/* mute tooltip artifacts — but keep ::after available for anchors */
+.hl:not(.anchor-hl)::after { display:none !important; }
+
+/* show brackets only while an anchor is force-highlighted */
+.hl.anchor-hl::before { content:"["; }
+.hl.anchor-hl::after  { content:"]"; display:inline; }
 
 /* make the right column cards use the same vertical spacing as the left */
 .mirror-box{
@@ -518,7 +523,7 @@ def _link_map_for_pair(
     idx2 = _index_claims(out2)
 
     # severity order
-    sev = {"contradiction": 3, "neutral": 2, "entailment": 1}
+    sev = {"contradiction": 3, "addition": 2, "neutral": 2, "entailment": 1}
 
     for r in block.get("nli_results") or []:
         prem = str(r.get("premise_raw") or r.get("premise") or "")
@@ -583,6 +588,23 @@ def _render_left(
         out1 = b.get("output_1") or []
         links, left_color = _link_map_for_pair(b)
 
+        # Build a set of left indices that serve as anchors for additions (neutral)
+        anchor_left_idxs = set()
+        idx1 = _index_claims(out1)
+        idx2 = _index_claims(b.get("output_2") or [])
+        for rr in b.get("nli_results") or []:
+            lblr = str(rr.get("label") or "").lower()
+            if lblr in ("neutral", "addition"):
+                prem = str(rr.get("premise_raw") or rr.get("premise") or "")
+                hyp  = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
+                i_li = idx1.get(prem)
+                # Prefer an explicit anchor index if your LLM provided one
+                anc_idx = rr.get("anchor")
+                if isinstance(anc_idx, int) and 0 <= anc_idx < len(out1):
+                    i_li = anc_idx
+                if i_li is not None:
+                    anchor_left_idxs.add(i_li)
+
         if out1:
             # severity order
             sev_rank = {"contradiction": 3, "neutral": 2, "entailment": 1}
@@ -621,7 +643,7 @@ def _render_left(
                     else ""
                 )
                 # If the best link for this left span is neutral → mark as "addition"
-                kind_attr = ' data-kind="addition"' if best_lbl == "neutral" else ""
+                kind_attr = ' data-kind="addition"' if best_lbl in ("neutral","addition") else ""
                 spans.append(
                     f'<span id="L-{pi}-{i1}" class="{cls}" data-pair="{pi}" data-left="{i1}"{target_attr}{hcolor_attr}{kind_attr}>{txt}</span>'
                 )
@@ -652,13 +674,13 @@ REASON_BY_LABEL = {
 
 
 def _hover_color(lbl: str) -> str:
-    # Match your left-side hover palette as close as possible
     PALETTE = {
         "contradiction": "#ffd6c2",  # soft red-ish
-        "neutral": "#fff3a0",  # yellow
+        "neutral": "rgba(59,130,246,.28)",  # BLUE
+        "addition": "rgba(59,130,246,.28)", # BLUE
         "entailment": "#d6ffd6",  # soft green
     }
-    return PALETTE.get(lbl or "", "#fff3a0")  # default to yellow
+    return PALETTE.get((lbl or "").lower(), "rgba(59,130,246,.28)")
 
 
 def _embed_right_claims_in_paragraph(
@@ -728,7 +750,7 @@ def _embed_right_claims_in_paragraph(
                 hcolor_attr = f' data-hcolor="{_hover_color(lbl or "neutral")}"'
 
             # Tag additions so JS can force-highlight the anchor mate on click
-            kind_attr = ' data-kind="addition"' if lbl == "neutral" else ""
+            kind_attr = ' data-kind="addition"' if lbl in ("neutral","addition") else ""
 
             # If this is the specific right claim we're focusing on, inject contradicting terms
             if (
@@ -741,30 +763,6 @@ def _embed_right_claims_in_paragraph(
                 )
             else:
                 inner = _escape(seg)
-
-            # If this right-claim is an addition and we know its anchor on the LEFT,
-            # render the anchor in GREEN, wrapped in [square brackets], right before the addition.
-            if lbl == "neutral":
-                if anchor_idx_for_right and j_hit in anchor_idx_for_right:
-                    aidx = anchor_idx_for_right[j_hit]
-                    # target back to the left anchor span
-                    anchor_id = f"L-{k}-{aidx}"
-                    atext = ""
-                    if anchor_text_for_right:
-                        atext = anchor_text_for_right.get(j_hit, "") or ""
-                    # fallback to raw left span text by index, if not provided
-                    if not atext:
-                        # (we don't have out1 here; anchor_text_for_right is preferred)
-                        pass
-                    if atext:
-                        anchor_html = (
-                            f'[<span class="hl entailment anchor-inline" '
-                            f'data-pair="{k}" data-left="{aidx}" '
-                            f'data-target="R-{k}-{j_hit}" '
-                            f'data-hcolor="{_hover_color("entailment")}" '
-                            f'id="{anchor_id}">{_escape(atext)}</span>] '
-                        )
-                        inner = anchor_html + inner
 
             # Only wrap the first occurrence of each claim to avoid duplicates
             if j_hit in used:
@@ -811,7 +809,7 @@ def _render_right_col(
     links, _left_color = _link_map_for_pair(b)
 
     # Decide label per right-claim (worst wins), but we will render ALL claims
-    severity = {"contradiction": 3, "neutral": 2, "entailment": 1}
+    severity = {"contradiction": 3, "addition": 2, "neutral": 2, "entailment": 1}
     label_for_right: Dict[int, str] = {}
 
     def take_worst(cur: str, new: str) -> str:
@@ -844,38 +842,6 @@ def _render_right_col(
             if prev is None or severity.get(lbl, 0) > severity.get(prev[1], 0):
                 best_for_right[rj] = (i_left, lbl)
 
-    # Build ANCHOR maps for neutrals (additions):
-    #  - anchor_idx_for_right[j] = i (left index acting as anchor for right addition j)
-    #  - anchor_text_for_right[j] = anchor text (for bracket rendering)
-    anchor_idx_for_right: Dict[int, int] = {}
-    anchor_text_for_right: Dict[int, str] = {}
-    idx1 = _index_claims(b.get("output_1") or [])
-    idx2 = _index_claims(b.get("output_2") or [])
-
-    for rr in b.get("nli_results") or []:
-        lblr = str(rr.get("label") or "").lower()
-        if lblr in ("neutral", "addition"):
-            prem = str(rr.get("premise_raw") or rr.get("premise") or "")
-            hyp = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
-            i_li = idx1.get(prem)
-            j_rj = idx2.get(hyp)
-
-            # Support explicit 'anchor' from LLM (index of LEFT anchor), else fallback to i_li
-            # If user prompt returns {"anchor": <left_idx>} — we'll trust it.
-            anc_idx = rr.get("anchor")
-            if isinstance(anc_idx, int) and 0 <= anc_idx < len(b.get("output_1") or []):
-                left_anchor_idx = anc_idx
-            else:
-                left_anchor_idx = i_li if i_li is not None else None
-
-            if (left_anchor_idx is not None) and (j_rj is not None):
-                anchor_idx_for_right[j_rj] = left_anchor_idx
-                # text of the anchor for bracket
-                raw_anchor = (b.get("output_1") or [])[left_anchor_idx]
-                anchor_text_for_right[j_rj] = str(
-                    raw_anchor.get("claim") or raw_anchor.get("input") or ""
-                )
-
     # FULL paragraph of Document B with right-claims embedded in-place (preserve order)
     paragraph_b = _text_right(b)
     claims_body = _embed_right_claims_in_paragraph(
@@ -886,8 +852,6 @@ def _render_right_col(
         best_for_right,
         target_right_idx,
         (contra_terms or {}),
-        anchor_idx_for_right,
-        anchor_text_for_right,
     )
 
     hdr = f"Document B — claims (pair {k+1})"
@@ -933,7 +897,7 @@ def _render_reason(blocks, focus):
     if not items:
         # fallback: worst label among links of this left span
         links, _ = _link_map_for_pair(b)
-        sev = {"contradiction": 3, "neutral": 2, "entailment": 1}
+        sev = {"contradiction": 3, "addition": 2, "neutral": 2, "entailment": 1}
         worst = None
         for _rj, lbl in links.get(i_left, []):
             if sev.get(lbl, 0) > sev.get(worst or "", 0):
