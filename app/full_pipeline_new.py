@@ -26,174 +26,25 @@ from app.config import LLM_NLI_SYSTEM_PROMPT
 
 # Stage 2
 from app.nli_predict import _list_models, run_nli_file
-from app.openai_client import make_client
+from app.openai_client import make_async_client, make_client
 
 # Stage 1+2 via LLM
 from app.pipeline_llm import run_llm_nli_file
 
 # Shared UI assets
-from app.settings import BASE_CSS, CUSTOM_JS, SIDEBAR_CSS, nav_tag
+from app.settings import (
+    BASE_CSS,
+    CUSTOM_JS,
+    HOVER_PALETTE,
+    NLI_REASON_BY_LABEL,
+    NLI_SEVERITY,
+    SIDEBAR_CSS,
+    VIEWER_CSS,
+    nav_tag,
+)
 
 # Styling
-EXTRA_CSS = (
-    BASE_CSS
-    + SIDEBAR_CSS
-    + """
-/* dual-pane viewer layout */
-.left-pane  { flex: 2 1 0; min-width: 420px; }
-.right-pane { flex: 1 1 0; position: static; max-height: 80vh; overflow:auto; }
-#viewer_row { align-items: stretch; }
-#left_pane, #right_pane { display: block; }
-
-/* paragraph card: compact, borderless, lightly indented with spacing */
-.para-box{
-  border: 0;
-  padding: 4px 0 10px 8px;      /* small left indent + breathing room */
-  margin: 12px 0;               /* visible separation between paragraphs */
-  background: transparent;      /* no box background */
-  box-shadow: none;             /* no shadow */
-}
-.para-head { display:none; }    /* hide the "Document A — paragraph N" header */
-.para-inner { line-height: 1.45; }
-
-/* claim spans */
-.hl{ position:relative; padding:0 3px; border-radius:5px; cursor:pointer; }
-.hl:hover { outline:1px dashed #888; }
-
-/* NLI colors — keep them faint */
-.hl.entailment     { background: rgba(34,197,94,.18); }   /* green */
-.hl.neutral        { background: rgba(59,130,246,.18); }  /* blue */
-.hl.addition { background: rgba(59,130,246,.18); }        /* blue */
-.hl.contradiction  { background: rgba(244,63,94,.18); }   /* red */
-
-/* contradiction term highlight */
-.contra-term{ background: #fff59a; padding:0 2px; border-radius:3px; }
-
-/* selected state: strong outline, keep original background color */
-.hl.selected { outline:2px solid #000 }
-
-/* mute tooltip artifacts — but keep ::after available for anchors */
-.hl:not(.anchor-hl)::after { display:none !important; }
-
-/* colored, bracketed anchors on demand (color via --anchor-color set by JS) */
-.hl.anchor-hl{
-  background:transparent !important;
-  outline:2px solid var(--anchor-color, #16a34a) !important;
-}
-.hl.anchor-hl::before { content:"["; color:var(--anchor-color, #16a34a); font-weight:700; }
-.hl.anchor-hl::after  { content:"]"; color:var(--anchor-color, #16a34a); font-weight:700; display:inline; }
-
-/* make the right column cards use the same vertical spacing as the left */
-.mirror-box{
-  border:1px solid #adb5bd;
-  padding:12px;
-  border-radius:12px;
-  background:#fafafa;
-  min-height:140px;
-  margin:12px 0;
-}
-/* ensure the very first cards start at the same top edge */
-.left-pane  .para-box:first-child,
-.right-pane .mirror-box:first-child {
-  margin-top: 0;
-}
-
-/* optional: stretch both columns to the same overall height */
-.viewer-wrap { display:flex; gap:16px; align-items:stretch; }
-
-/* left column title */
-.anch{ font-size:11px; opacity:.8; margin-left:4px; text-decoration:none; }
-
-/* legend + confidence UI */
-.toolbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:8px 0; }
-.legend { display:flex; gap:12px; align-items:center; font-size:12px; color:#475569; }
-.legend .key { display:inline-flex; align-items:center; gap:6px; }
-.legend .dot { width:10px; height:10px; border-radius:2px; display:inline-block; }
-.legend .dot.ent { background:#22c55e; } /* entailment */
-.legend .dot.con { background:#f43f5e; } /* contradiction */
-.legend .dot.neu { background:#3b82f6; } /* addition/neutral */
-
-/* dynamic heights */
-.para-box{ min-height: unset; }
-.mirror-box{ min-height: unset; }
-
-/* right pane: independent scroller */
-#right_pane {
-  position: static;
-  max-height: 80vh;
-  overflow-y: auto;
-}
-
-/* reasoning panel — tighter to right pane, bolder, larger text */
-.reason-wrap {
-  margin-top: 4px;                 /* closer to right pane content */
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.reason-title {
-  font-weight: 800;
-  margin: 3px 0 3px;
-  font-size: 16px;
-}
-.reason-card {
-  border: 2px solid #334155;       /* solid, visible */
-  background: #ffffff;
-  padding: 10px 12px;
-  border-radius: 12px;
-  font-size: 14px;                 /* bigger text */
-  font-weight: 500;                /* bold content */
-  box-shadow: 0 2px 6px rgba(0,0,0,.06);
-}
-
-/* contradiction focus box */
-.contra-box { margin-top:10px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#fafafa }
-.contra-head { font-weight:600;margin-bottom:6px }
-.contra-row { display:flex;gap:8px;align-items:flex-start;margin:4px 0 }
-.side-tag { font-size:12px;color:#6b7280;padding:2px 6px;border:1px solid #e5e7eb;border-radius:9999px }
-.side-pills { display:flex;gap:6px;flex-wrap:wrap }
-.pill { display:inline-block;padding:2px 8px;border:1px solid #d1d5db;border-radius:9999px;background:white;font-size:12px }
-.contra-src { margin-top:8px;font-size:12px;color:#6b7280;display:grid;gap:2px }
-.src-tag { font-weight:600;color:#4b5563 }
-
-/* Make the left pane feel like a single “big box” of Document A */
-.left-pane {
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    padding: 8px;
-    background: #fff;
-    max-height: 80vh;       /* left pane its own scroller */
-    overflow-y: auto;
-}
-.left-pane .para-box { margin: 8px 0; }
-
-/* left column title */
-.left-title{
-  font-weight:700;
-  font-size:14px;
-  color:#334155;
-  margin:4px 4px 10px 4px;
-  opacity:.9;
-}
-
-/* right column title */
-.right-title{
-  font-weight:700;
-  font-size:14px;
-  color:#334155;
-  margin:4px 4px 10px 4px;
-  opacity:.9;
-}
-
-/* Dimming behavior for left pane */
-.left-pane .para-box.para-focus { outline: 2px solid #334155; }
-.left-pane .para-box.para-dim   { opacity: .55; filter: saturate(.6); }
-
-/* top toolbar row: keep everything on one line, nicely aligned */
-#topline_row { align-items: flex-end; gap:12px; }
-#topline_row .gr-accordion { margin: 0; }
-"""
-)
+EXTRA_CSS = BASE_CSS + SIDEBAR_CSS + VIEWER_CSS
 
 
 # Helpers
@@ -330,12 +181,12 @@ def _index_claims(claims: List[Dict[str, Any]]) -> Dict[str, int]:
             idx[s] = i
     return idx
 
+
 def _get_claim_text(claim: Dict[str, Any]) -> str:
     return str(claim.get("claim") or claim.get("input") or "").strip()
 
-def _entailment_maps(
-    block: Dict[str, Any]
-) -> Tuple[Dict[int, int], Dict[int, int]]:
+
+def _entailment_maps(block: Dict[str, Any]) -> Tuple[Dict[int, int], Dict[int, int]]:
     """
     Return two maps based on entailment/equivalent links only:
       ent_L_to_R[left_idx]  = right_idx
@@ -353,10 +204,12 @@ def _entailment_maps(
         if lbl not in ("entailment", "equivalent"):
             continue
         prem = str(r.get("premise_raw") or r.get("premise") or "")
-        hyp  = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
-        li = idx1.get(prem); rj = idx2.get(hyp)
+        hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+        li = idx1.get(prem)
+        rj = idx2.get(hyp)
         if li is None or rj is None:
-            li = idx1.get(hyp); rj = idx2.get(prem)
+            li = idx1.get(hyp)
+            rj = idx2.get(prem)
         if li is None or rj is None:
             continue
         if li not in ent_L_to_R:
@@ -365,8 +218,9 @@ def _entailment_maps(
             ent_R_to_L[rj] = li
     return ent_L_to_R, ent_R_to_L
 
+
 def _build_addition_anchors(
-    block: Dict[str, Any]
+    block: Dict[str, Any],
 ) -> Tuple[Dict[int, int], Dict[int, int], Dict[int, int]]:
     """
     Returns three maps:
@@ -396,10 +250,14 @@ def _build_addition_anchors(
         if lbl not in ("neutral", "addition"):
             continue
         prem = str(r.get("premise_raw") or r.get("premise") or "")
-        hyp  = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+        hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
         # Robust mapping: either side may be empty / swapped for additions
-        li = idx1.get(prem) if prem in idx1 else (idx1.get(hyp) if hyp in idx1 else None)
-        rj = idx2.get(hyp)  if hyp  in idx2 else (idx2.get(prem) if prem in idx2 else None)
+        li = (
+            idx1.get(prem) if prem in idx1 else (idx1.get(hyp) if hyp in idx1 else None)
+        )
+        rj = (
+            idx2.get(hyp) if hyp in idx2 else (idx2.get(prem) if prem in idx2 else None)
+        )
         if li is None and rj is None:
             continue
 
@@ -456,6 +314,7 @@ def _build_addition_anchors(
 
     return left_addition_anchor, right_add_to_left_anchor, right_add_to_right_anchor
 
+
 # cache to avoid repeat calls for same (left,right)
 _CONTRA_CACHE: Dict[str, Dict[str, List[str]]] = {}
 
@@ -500,23 +359,36 @@ async def _llm_contra_terms_async(
     Falls back to token diff on error.
     """
     try:
-        client, mid = make_client(model_id)
+        client, mid = make_async_client(model_id)
         prompt = (
-            "Here are two spans of Russian text that contradict each other.\n"
-            "Your task: extract SHORT words/phrases (1–4 words) that constitute the contradiction.\n"
+            "Here are two spans of a text that contradict each other.\n"
+            "Your task: extract SHORT key words/phrases (1–4 words) that constitute the contradiction.\n"
             "Return JSON ONLY in this form:\n"
             '{"from_span_1": ["..."], "from_span_2": ["..."]}\n'
             "Do not add any commentary.\n\n"
             f"span_1: {left}\n"
             f"span_2: {right}\n"
         )
-        resp = await client.chat.completions.create(
-            model=mid,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.01,
-            response_format={"type": "json_object"},
-        )
-        data = json.loads(resp.choices[0].message.content)
+        try:
+            resp = await client.chat.completions.create(
+                model=mid,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.01,
+                response_format={"type": "json_object"},
+            )
+            data = json.loads(resp.choices[0].message.content or "{}")
+        finally:
+            # Close the underlying httpx.AsyncClient before the loop is torn down.
+            try:
+                closer = getattr(client, "aclose", None) or getattr(
+                    client, "close", None
+                )
+                if closer:
+                    res = closer()
+                    if asyncio.iscoroutine(res):
+                        await res
+            except Exception:
+                pass
         # basic hygiene
         a = [str(x).strip() for x in data.get("from_span_1", []) if str(x).strip()]
         b = [str(x).strip() for x in data.get("from_span_2", []) if str(x).strip()]
@@ -527,6 +399,27 @@ async def _llm_contra_terms_async(
         return _fallback_contra_terms(left, right)
 
 
+# Run a coroutine regardless of current loop state; use a side thread if needed.
+def _run_coro_sync(coro):
+    try:
+        loop = asyncio.get_running_loop()
+        if loop.is_running():
+            import threading
+
+            box = {}
+
+            def runner():
+                box["res"] = asyncio.run(coro)
+
+            t = threading.Thread(target=runner, daemon=True)
+            t.start()
+            t.join()
+            return box.get("res")
+    except RuntimeError:
+        pass
+    return asyncio.run(coro)
+
+
 def _get_contra_terms(
     left: str, right: str, use_llm: bool, model_id: str
 ) -> Dict[str, List[str]]:
@@ -534,15 +427,8 @@ def _get_contra_terms(
     if key in _CONTRA_CACHE:
         return _CONTRA_CACHE[key]
     if use_llm:
-        # run sync-friendly
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            result = loop.run_until_complete(_llm_contra_terms_async(left, right, model_id))  # type: ignore
-        else:
-            result = asyncio.run(_llm_contra_terms_async(left, right, model_id))
+        # Run safely even if an event loop is already running (e.g., inside Gradio)
+        result = _run_coro_sync(_llm_contra_terms_async(left, right, model_id))
     else:
         result = _fallback_contra_terms(left, right)
     _CONTRA_CACHE[key] = result
@@ -717,7 +603,9 @@ def _render_left(
         out1 = b.get("output_1") or []
         links, left_color = _link_map_for_pair(b)
         # Build anchor maps (so additions snap to anchors)
-        left_add_anchor, right_add_to_left_anchor, right_add_to_right_anchor = _build_addition_anchors(b)
+        left_add_anchor, right_add_to_left_anchor, right_add_to_right_anchor = (
+            _build_addition_anchors(b)
+        )
         # We also need "where does a LEFT anchor point on the RIGHT?" → use entailment map
         ent_L_to_R, _ent_R_to_L = _entailment_maps(b)
 
@@ -729,7 +617,7 @@ def _render_left(
             lblr = str(rr.get("label") or "").lower()
             if lblr in ("neutral", "addition"):
                 prem = str(rr.get("premise_raw") or rr.get("premise") or "")
-                hyp  = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
+                hyp = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
                 i_li = idx1.get(prem)
                 # Prefer an explicit anchor index if your LLM provided one
                 anc_idx = rr.get("anchor")
@@ -780,9 +668,13 @@ def _render_left(
                     target_attr = f' data-target="R-{pi}-{anc_rj}"'
                     hcolor_attr = f' data-hcolor="{_hover_color("entailment")}"'
                 else:
-                    target_attr = f' data-target="R-{pi}-{best_r}"' if best_r is not None else ""
+                    target_attr = (
+                        f' data-target="R-{pi}-{best_r}"' if best_r is not None else ""
+                    )
                     hcolor_attr = (
-                        f' data-hcolor="{_hover_color(best_lbl)}"' if best_r is not None else ""
+                        f' data-hcolor="{_hover_color(best_lbl)}"'
+                        if best_r is not None
+                        else ""
                     )
 
                 # Addition tagging + intra-doc anchors (left + right) for JS
@@ -815,23 +707,11 @@ def _render_left(
     return "\n".join(html_parts)
 
 
-REASON_BY_LABEL = {
-    "equivalent": "спаны идентичны",
-    "entailment": "спаны идентичны",
-    "contradiction": "противоречие между утверждениями",
-    "addition": "дополнение / новая информация",
-    "neutral": "дополнение / новая информация",
-}
+REASON_BY_LABEL = NLI_REASON_BY_LABEL
 
 
 def _hover_color(lbl: str) -> str:
-    PALETTE = {
-        "contradiction": "#ffd6c2",  # soft red-ish
-        "neutral": "rgba(59,130,246,.28)",  # BLUE
-        "addition": "rgba(59,130,246,.28)", # BLUE
-        "entailment": "#d6ffd6",  # soft green
-    }
-    return PALETTE.get((lbl or "").lower(), "rgba(59,130,246,.28)")
+    return HOVER_PALETTE.get((lbl or "").lower(), HOVER_PALETTE["neutral"])
 
 
 def _embed_right_claims_in_paragraph(
@@ -892,8 +772,11 @@ def _embed_right_claims_in_paragraph(
         if j_hit is not None:
             # label + best mate on the left (to keep cross-hover/selection)
             lbl = (label_for_right.get(j_hit, "") or "").lower()
+            # include 'addition' so blue styling applies on the right too
             cls = "hl " + (
-                lbl if lbl in ("contradiction", "neutral", "entailment") else ""
+                lbl
+                if lbl in ("contradiction", "neutral", "addition", "entailment")
+                else ""
             )
             self_col = _hover_color(lbl or "neutral")
 
@@ -908,11 +791,11 @@ def _embed_right_claims_in_paragraph(
 
             # Addition wiring: point to *left* anchor if provided; attach *right* in-pane anchor id.
             extras = []
-            is_add = lbl in ("neutral","addition")
+            is_add = lbl in ("neutral", "addition")
             if is_add:
                 extras.append('data-kind="addition"')
                 # left anchor (cross-doc): if known, point to it and store for JS highlight
-                if (anchor_idx_for_right and j_hit in anchor_idx_for_right):
+                if anchor_idx_for_right and j_hit in anchor_idx_for_right:
                     const_li_anchor = anchor_idx_for_right[j_hit]
                     target_attr = f' data-target="L-{k}-{const_li_anchor}"'
                     hcolor_attr = f' data-hcolor="{_hover_color("entailment")}"'
@@ -982,7 +865,7 @@ def _render_right_col(
     links, _left_color = _link_map_for_pair(b)
 
     # Decide label per right-claim (worst wins), but we will render ALL claims
-    severity = {"contradiction": 3, "addition": 2, "neutral": 2, "entailment": 1}
+    severity = NLI_SEVERITY
     label_for_right: Dict[int, str] = {}
 
     def take_worst(cur: str, new: str) -> str:
@@ -1018,7 +901,9 @@ def _render_right_col(
     # FULL paragraph of Document B with right-claims embedded in-place (preserve order)
     paragraph_b = _text_right(b)
     # Build addition anchors so right additions can carry both left & right anchors
-    left_add_anchor, right_add_to_left_anchor, right_add_to_right_anchor = _build_addition_anchors(b)
+    left_add_anchor, right_add_to_left_anchor, right_add_to_right_anchor = (
+        _build_addition_anchors(b)
+    )
     # For the embedder, pass:
     #   - left anchor indices for cross-doc target + data-lanchor
     #   - the exact right anchor TEXT (so it can locate the right in-pane anchor by text)
@@ -1050,7 +935,7 @@ def _render_right_col(
         target_right_idx,
         (contra_terms or {}),
         anchor_idx_for_right=right_add_to_left_anchor,  # for data-lanchor + cross-doc target
-        anchor_text_for_right=anchor_text_for_right,    # for data-ranchor (in-pane)
+        anchor_text_for_right=anchor_text_for_right,  # for data-ranchor (in-pane)
     )
 
     hdr = f"Document B — claims (pair {k+1})"
@@ -1280,7 +1165,7 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
             out1 = block.get("output_1") or []
             out2 = block.get("output_2") or []
             links, _ = _link_map_for_pair(block)
-            severity = {"contradiction": 3, "neutral": 2, "entailment": 1}
+            severity = NLI_SEVERITY
             best_li, best_lbl = None, ""
             for li, pairs in links.items():
                 for r_idx, lbl in pairs:
@@ -1534,6 +1419,16 @@ with gr.Blocks(
                     idx2 = _index_claims(out2)
                     parA = _text_left(b)
                     parB = _text_right(b)
+
+                    # optional: help consumers find anchors easily
+                    def _anchor_payload(r):
+                        anc = r.get("anchor")
+                        if isinstance(anc, int) and 0 <= anc < len(out1):
+                            return anc, str(
+                                out1[anc].get("claim") or out1[anc].get("input") or ""
+                            )
+                        return None, None
+
                     for r in b.get("nli_results") or []:
                         prem = str(r.get("premise_raw") or r.get("premise") or "")
                         hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
@@ -1553,6 +1448,7 @@ with gr.Blocks(
                             left_span, right_span = hyp, prem
                         else:
                             left_span, right_span = prem, hyp
+                        anc_idx, anc_text = _anchor_payload(r)
                         rows.append(
                             {
                                 "pair_index": k + 1,
@@ -1562,6 +1458,8 @@ with gr.Blocks(
                                 "right_span": right_span,
                                 "label": lbl,
                                 "explanation": expl,
+                                "anchor_idx": anc_idx,
+                                "anchor_span": anc_text,
                                 "paragraph_A": parA,
                                 "paragraph_B": parB,
                             }

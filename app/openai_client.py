@@ -13,7 +13,8 @@ def make_client(model: str):
     Raises *RuntimeError* if the appropriate API key is missing.
     """
 
-    use_openrouter = "/" in model  # heuristic – OpenRouter models have provider prefix
+    # Heuristic: treat either "/" or ":" prefixed IDs as OpenRouter (provider/model or provider:model)
+    use_openrouter = ("/" in model) or (":" in model)
 
     if use_openrouter:
         api_key = os.getenv("OPENROUTER_API_KEY")
@@ -34,7 +35,7 @@ def make_client(model: str):
 def make_async_client(model: str):
     """Async variant of `make_client` that returns (AsyncOpenAI(), model_id)."""
     model = (model or "").strip()
-    use_openrouter = ":" in model  # e.g. "openai/gpt-4o-mini"
+    use_openrouter = ("/" in model) or (":" in model)
 
     if use_openrouter:
         api_key = os.getenv("OPENROUTER_API_KEY")

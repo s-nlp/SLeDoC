@@ -2,6 +2,7 @@
 
 Gradio-based dashboards for Semantic-Mismatch
 
+# Overview
 
 ## Repository
 ```
@@ -16,13 +17,28 @@ app/ Python package
 ├─ Dockerfile
 ├─ docker-compose.yml
 └─ Makefile
+
+### How “ADDITION with Anchor” works
+Your LLM returns items like:
+
+```json
+{
+  "span_1": "...",
+  "span_2": "...",
+  "reasoning": "...",
+  "label": "addition",
+  "anchor": "<verbatim phrase from the *first* paragraph>"
+}
 ```
 
-## Configuration (.env)
+## Environment/Configuration (.env)
 
 Create a `.env` from `.env.example` (or set these in your process manager):
 
-- `OPENAI_API_KEY` or `OPENROUTER_API_KEY` — LLM provider key.
+Set at least one of:
+- `OPENAI_API_KEY` **or** `OPENROUTER_API_KEY`
+
+Optional:
 - `LLM_MAX_PARALLEL` — max concurrent LLM calls (default: 8).
 - `LLM_NLI_SYSTEM_PROMPT_FILE` — path to system prompt for the end-to-end LLM branch.
 - `CLAIM_EXTRACTOR_SYSTEM_PROMPT_FILE` — path to system prompt for the claim-extraction stage.

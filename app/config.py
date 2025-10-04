@@ -73,8 +73,8 @@ def resolve_default_prompt_path(prefix: str) -> str | None:
     return first_existing_path(*map(str, candidates))
 
 
-# Then change the two prompt loads to allow fallback files:
-LLM_NLI_SYSTEM_PROMPT = load_prompt(
+# Prompt resolution with file → env → default fallback
+LLM_NLI_SYSTEM_PROMPT: str = load_prompt(
     "LLM_NLI_SYSTEM_PROMPT",
     "LLM_NLI_SYSTEM_PROMPT_FILE",
     default_text=(
@@ -85,8 +85,7 @@ LLM_NLI_SYSTEM_PROMPT = load_prompt(
         else ""
     ),
 )
-
-CLAIM_EXTRACTOR_SYSTEM_PROMPT = load_prompt(
+CLAIM_EXTRACTOR_SYSTEM_PROMPT: str = load_prompt(
     "CLAIM_EXTRACTOR_SYSTEM_PROMPT",
     "CLAIM_EXTRACTOR_SYSTEM_PROMPT_FILE",
     default_text=(
@@ -100,13 +99,3 @@ CLAIM_EXTRACTOR_SYSTEM_PROMPT = load_prompt(
 
 # Public config
 LLM_MAX_PARALLEL: int = _env_int("LLM_MAX_PARALLEL", 8)
-
-# Prompts (empty defaults; module-level defaults will be used if these are empty)
-LLM_NLI_SYSTEM_PROMPT: str = load_prompt(
-    "LLM_NLI_SYSTEM_PROMPT", "LLM_NLI_SYSTEM_PROMPT_FILE", default_text=""
-)
-CLAIM_EXTRACTOR_SYSTEM_PROMPT: str = load_prompt(
-    "CLAIM_EXTRACTOR_SYSTEM_PROMPT",
-    "CLAIM_EXTRACTOR_SYSTEM_PROMPT_FILE",
-    default_text="",
-)

@@ -105,24 +105,34 @@ def _extract_for_paragraph(
 
 
 async def _achat_completion(
-    prompt: str, system_prompt: str, model_name: str, temperature: float
+    prompt: str, system_prompt: str, model_name: str, temperature: float = 0.01
 ) -> str:
     client, model_id = make_async_client(model_name)
-    async for attempt in AsyncRetrying(
-        wait=wait_random_exponential(multiplier=1, max=20),
-        stop=stop_after_attempt(6),
-        retry=retry_if_exception_type(openai.OpenAIError),
-    ):
-        with attempt:
-            resp = await client.chat.completions.create(
-                model=model_id,
-                temperature=temperature,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-            )
-            return resp.choices[0].message.content
+    try:
+        async for attempt in AsyncRetrying(
+            wait=wait_random_exponential(multiplier=1, max=20),
+            stop=stop_after_attempt(6),
+            retry=retry_if_exception_type(openai.OpenAIError),
+        ):
+            with attempt:
+                resp = await client.chat.completions.create(
+                    model=model_id,
+                    temperature=temperature,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                )
+                return resp.choices[0].message.content
+    finally:
+        try:
+            closer = getattr(client, "aclose", None) or getattr(client, "close", None)
+            if closer:
+                res = closer()
+                if asyncio.iscoroutine(res):
+                    await res
+        except Exception:
+            pass
 
 
 async def _extract_for_paragraph_async(

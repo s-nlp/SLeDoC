@@ -167,22 +167,32 @@ async def _achat_completion(
     system_prompt: str, user_prompt: str, *, model_name: str, temperature: float
 ) -> str:
     client, model_id = make_async_client(model_name)
-    # Tenacity async retry
-    async for attempt in AsyncRetrying(
-        wait=wait_random_exponential(multiplier=1, max=20),
-        stop=stop_after_attempt(6),
-        retry=retry_if_exception_type(openai.OpenAIError),
-    ):
-        with attempt:
-            resp = await client.chat.completions.create(
-                model=model_id,
-                temperature=temperature,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-            )
-            return resp.choices[0].message.content
+    try:
+        # Tenacity async retry
+        async for attempt in AsyncRetrying(
+            wait=wait_random_exponential(multiplier=1, max=20),
+            stop=stop_after_attempt(6),
+            retry=retry_if_exception_type(openai.OpenAIError),
+        ):
+            with attempt:
+                resp = await client.chat.completions.create(
+                    model=model_id,
+                    temperature=temperature,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                )
+                return resp.choices[0].message.content
+    finally:
+        try:
+            closer = getattr(client, "aclose", None) or getattr(client, "close", None)
+            if closer:
+                res = closer()
+                if asyncio.iscoroutine(res):
+                    await res
+        except Exception:
+            pass
 
 
 async def async_llm_pairwise(
