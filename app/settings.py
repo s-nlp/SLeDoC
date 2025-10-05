@@ -593,6 +593,8 @@ CUSTOM_JS = """
       current.selectedRightId = span.id;
 
       const mateId = span.dataset.target; // points to L-k-li
+      // Fallback: for additions without data-target, try left anchor
+      const laFallback = span.dataset.lanchor || '';
       current.selectedLeftId = mateId || null;
       if (mateId) {
         const mate = q('#' + CSS.escape(mateId));
@@ -622,13 +624,20 @@ CUSTOM_JS = """
       // dim all other LEFT spans, keep only the left anchor (and/or left mate) bright
       const keep = [];
       if (mateId) keep.push(mateId);
+      // try anchor fallback for additions
+      if (!mateId && laFallback) {
+        keep.push(laFallback);
+        current.selectedLeftId = laFallback;
+      }
       if (span.dataset.kind === 'addition' && span.dataset.lanchor) {
         keep.push(span.dataset.lanchor);
       }
       if (keep.length) {
         dimLeftSpansExcept(keep);
       } else {
-        clearLeftSpanDimming();           // avoid stale dimming on first click
+        // If we still don't know the mate, dim EVERYTHING on the left for this moment
+        // (Python will re-render with the correct left focus and our observers will restore selection)
+        qa('#left_pane .hl').forEach(el => el.classList.add('dimmed'));
       }
       current.keepIds = keep.slice();     // always refresh keepIds
       // persist left anchor so we can re-apply brackets after re-render

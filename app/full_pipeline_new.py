@@ -973,6 +973,7 @@ def _embed_right_claims_in_paragraph(
     fallback_left_anchor_by_text: Optional[Dict[str, int]] = None,
     left_anchor_to_right_anchor: Optional[Dict[int, Tuple[Optional[int], str]]] = None,
     left_add_to_right_add: Optional[Dict[int, int]] = None,
+    ent_right_to_left: Optional[Dict[int, int]] = None,
 ) -> str:
     """
     Return the FULL Document B paragraph with all right-claims embedded in-place
@@ -1037,6 +1038,13 @@ def _embed_right_claims_in_paragraph(
             else:
                 target_attr = ""
                 hcolor_attr = f' data-hcolor="{_hover_color(lbl or "neutral")}"'
+
+            # FINAL SAFETY NET: if still no cross-doc target, use entailment map R->L
+            if not target_attr and ent_right_to_left and (j_hit in ent_right_to_left):
+                li_idx = ent_right_to_left[j_hit]
+                target_attr = f' data-target="L-{k}-{li_idx}"'
+                # color: default to entailment green for anchors discovered via entailment
+                hcolor_attr = f' data-hcolor="{_hover_color("entailment")}"'
 
             # Addition wiring: point to *left* anchor if provided; attach *right* in-pane anchor id.
             extras = []
@@ -1217,7 +1225,7 @@ def _render_right_col(
     if anchor_text_for_right:
         pass
     # Fill remaining with entailing right of the left anchor (if any)
-    ent_L_to_R, _ = _entailment_maps(b)
+    ent_L_to_R, ent_R_to_L = _entailment_maps(b)
     for rj, li_anchor in (right_add_to_left_anchor or {}).items():
         if rj in anchor_text_for_right:
             continue
@@ -1269,6 +1277,7 @@ def _render_right_col(
         fallback_left_anchor_by_text=right_text_to_left_anchor,  # anchor by text if no rj
         left_anchor_to_right_anchor=left_anchor_to_right_anchor,  # color brackets by contra/ent
         left_add_to_right_add=left_add_to_right_add,  # mark true self-anchors
+        ent_right_to_left=ent_R_to_L,  # ensure every right span can target some left
     )
 
     hdr = f"Document B — claims (pair {k+1})"
@@ -1294,12 +1303,14 @@ def _render_reason(blocks, focus):
         return '<div class="reason-wrap"></div>'
 
     items: List[str] = []
-    # 1) Prefer any record that maps to this left index (by indices, not strings)
+    # 1) Prefer any record that maps to this left index (by indices, not strings).
+    #    If mapping-by-text fails (e.g. additions), also accept records whose explicit anchor == i_left.
     for r in b.get("nli_results") or []:
         li, _rj = _map_record_indices(b, r)
-        if li != i_left:
-            continue
         lab = str(r.get("label") or "").lower()
+        anc = r.get("anchor") if isinstance(r.get("anchor"), int) else None
+        if li != i_left and anc != i_left:
+            continue
         reason = (
             r.get("explanation")
             or r.get("reason")
@@ -1309,7 +1320,7 @@ def _render_reason(blocks, focus):
         if reason:
             items.append(f'<div class="reason-card">{html.escape(str(reason))}</div>')
 
-    # 2) If nothing matched (e.g., additions): use any (addition|neutral) whose anchor == i_left
+    # 2) If nothing matched try an explicit (addition|neutral) whose anchor == i_left
     if not items:
         for r in b.get("nli_results") or []:
             lab = str(r.get("label") or "").lower()
@@ -1325,6 +1336,18 @@ def _render_reason(blocks, focus):
                         f'<div class="reason-card">{html.escape(str(reason))}</div>'
                     )
                     break
+    # 3) Absolute last resort: derive worst label for this left span and show default copy
+    if not items:
+        links, _ = _link_map_for_pair(b)
+        sev = NLI_SEVERITY
+        worst = ""
+        for rj, lbl in links.get(i_left, []):
+            if sev.get(lbl, 0) > sev.get(worst, 0):
+                worst = lbl
+        if worst:
+            items.append(
+                f'<div class="reason-card">{html.escape(REASON_BY_LABEL.get(worst, ""))}</div>'
+            )
 
     return (
         '<div class="reason-wrap"><div class="reason-title"><b>Explanation</b></div>'
