@@ -417,6 +417,7 @@ CUSTOM_JS = """
             const el = q('#' + CSS.escape(current.selectedLeftId));
             if (el) {
               el.classList.add('selected');
+              el.classList.remove('dimmed');    // ensure it’s bright after repaint
               el.style.outline = '2px solid #000';
             }
           }
@@ -443,6 +444,7 @@ CUSTOM_JS = """
             const el = q('#' + CSS.escape(current.selectedRightId));
             if (el) {
               el.classList.add('selected');
+              el.classList.remove('dimmed');   // mirror left-side fix
               el.style.outline = '2px solid #000';
             }
           }
@@ -625,8 +627,10 @@ CUSTOM_JS = """
       }
       if (keep.length) {
         dimLeftSpansExcept(keep);
-        current.keepIds = keep.slice();
+      } else {
+        clearLeftSpanDimming();           // avoid stale dimming on first click
       }
+      current.keepIds = keep.slice();     // always refresh keepIds
       // persist left anchor so we can re-apply brackets after re-render
       current.anchorIds = [];
       if (span.dataset.kind === 'addition') {
