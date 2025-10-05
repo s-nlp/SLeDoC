@@ -1468,7 +1468,9 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                 _render_left(ps or []),
                 _render_right_col(ps or [], (k, None)),
                 _render_reason(ps or [], (k, None)),
-                gr.update(value=str(k + 1)),
+                gr.update(
+                    value=str(k + 1)
+                ),  # ok to update Radio on paragraph card click
             )
         if v and v.startswith("S:"):
             _t, a, b = v.split(":")
@@ -1540,7 +1542,7 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                 _render_left(ps or [], (k, l_), terms),
                 _render_right_col(ps or [], (k, l_), terms, rj),
                 _render_reason(ps or [], (k, l_)),
-                gr.update(value=str(k + 1)),
+                gr.update(),  # DO NOT update Radio from span clicks -> prevents second overwrite render
             )
         if v and v.startswith("R:"):
             # Click from RIGHT span -> we compute terms for the specific (k, rj)
@@ -1617,7 +1619,7 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                 _render_left(ps or [], (k, best_li), terms),
                 _render_right_col(ps or [], (k, best_li), terms, target_right_idx=rj),
                 _render_reason(ps or [], (k, best_li)),
-                gr.update(value=str(k + 1)),
+                gr.update(),  # DO NOT update Radio from span clicks -> prevents second overwrite render
             )
     except Exception:
         pass
@@ -1625,7 +1627,7 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
         _render_left(ps or []),
         _render_right_col(ps or [], (k, l_)),
         _render_reason(ps or [], (k, l_)),
-        gr.update(value=str(k + 1)),
+        gr.update(),  # DO NOT update Radio from span clicks -> prevents second overwrite render
     )
 
 

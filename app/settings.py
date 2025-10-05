@@ -516,6 +516,7 @@ CUSTOM_JS = """
         if (mate) {
           mate.classList.add('selected');
           mate.style.outline = '2px solid #000';
+          mate.classList.remove('dimmed'); // ensure it is not dimmed on first paint
           // If LEFT click was on an "addition" span, force its mate (anchor) to green
           if (span.dataset.kind === 'addition') forceAnchor(mate);
         }
@@ -562,10 +563,18 @@ CUSTOM_JS = """
 
       const pidx = parseInt(span.getAttribute('data-pair') || '0', 10);
       const lidx = span.getAttribute('data-left');
+      // apply paragraph dimming immediately for snappy feel
+      current.idx = pidx;
+      dimParagraphs(current.idx);
+
+      // If this is an ADDITION, clear Explanation box immediately (Python will re-fill if needed)
+      if (span.dataset.kind === 'addition') {
+        const rb = q('#reason_box');
+        if (rb) rb.innerHTML = '<div class="reason-wrap"><div class="reason-title"><b>Explanation</b></div></div>';
+      }
 
       if (sendBridge(`S:${pidx}:${lidx}`)) {
-        current.idx = pidx;
-        dimParagraphs(current.idx);   // only dim
+        // no-op; already dimmed above
       }
       e.stopImmediatePropagation();
       return;
@@ -588,6 +597,7 @@ CUSTOM_JS = """
         if (mate) {
           mate.classList.add('selected');
           mate.style.outline = '2px solid #000';
+          mate.classList.remove('dimmed'); // guarantee not dimmed on first click
           // If RIGHT click was on an "addition" span, force its mate (anchor) to green
           if (span.dataset.kind === 'addition') forceAnchor(mate);
         }
@@ -639,9 +649,18 @@ CUSTOM_JS = """
 
       const pidx = parseInt(span.getAttribute('data-pair') || '0', 10);
       const ridx = span.getAttribute('data-right');
+      // apply paragraph dimming immediately; prevents “first click looks dimmed”
+      current.idx = pidx;
+      dimParagraphs(current.idx);
+
+      // If this is an ADDITION, clear Explanation box immediately (Python will re-fill appropriate reason)
+      if (span.dataset.kind === 'addition') {
+        const rb = q('#reason_box');
+        if (rb) rb.innerHTML = '<div class="reason-wrap"><div class="reason-title"><b>Explanation</b></div></div>';
+      }
+
       if (sendBridge(`R:${pidx}:${ridx}`)) {
-        current.idx = pidx;
-        dimParagraphs(current.idx);
+        // already set above
       }
       e.stopImmediatePropagation();
       return;
