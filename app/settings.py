@@ -519,6 +519,11 @@ CUSTOM_JS = """
       // Dim all other LEFT spans + remember this set for re-renders
       dimLeftSpansExcept(keep);
       current.keepIds = keep.slice();
+      current.anchorIds = [];
+      if (span.dataset.kind === 'addition') {
+        if (span.dataset.lanchor) current.anchorIds.push(span.dataset.lanchor);
+        if (span.dataset.selfanchor === '1') current.anchorIds.push(span.id);
+      }
 
       // force-highlight the LEFT in-pane anchor when present
       if (span.dataset.kind === 'addition') {
@@ -538,8 +543,9 @@ CUSTOM_JS = """
 
       if (sendBridge(`S:${pidx}:${lidx}`)) {
         current.idx = pidx;
-        dimParagraphs(current.idx);   // ← NEW: only dim, no scroll, no float
+        dimParagraphs(current.idx);   // only dim
       }
+      e.stopImmediatePropagation();
       return;
     }
 
@@ -613,6 +619,7 @@ CUSTOM_JS = """
         current.idx = pidx;
         dimParagraphs(current.idx);
       }
+      e.stopImmediatePropagation();
       return;
     }
 
@@ -628,24 +635,36 @@ CUSTOM_JS = """
         clearRightSpanDimming();
         current.keepIds = [];
         current.keepRightIds = [];
+        current.anchorIds = [];
+        current.anchorRightIds = [];
       }
+    e.stopImmediatePropagation();
+    return;
     }
   }, {capture:true});
 
-  /* Optional: clear dimming if user clicks empty space in left pane */
+  /* Clear dimming only when clicking outside BOTH panes (and not on a claim) */
   root().addEventListener('click', function (e) {
-    const left = q('#left_pane');
+    const left  = q('#left_pane');
+    const right = q('#right_pane');
     if (!left) return;
-    if (left.contains(e.target)) {
-      // clicks already handled above
-    } else {
-      current.idx = null;
-      clearParagraphDimming();
-      clearLeftSpanDimming();
-      clearRightSpanDimming();
-      current.keepIds = [];
-      current.keepRightIds = [];
+
+    const t = (e.composedPath && e.composedPath()[0]) || e.target;
+    // If the click is inside either pane or on a claim span, don't clear.
+    if ((left.contains(t) || (right && right.contains(t))) ||
+        (t.closest && t.closest('span.hl'))) {
+      return;
     }
+
+    // Clicked outside the viewer → clear everything
+    current.idx = null;
+    clearParagraphDimming();
+    clearLeftSpanDimming();
+    clearRightSpanDimming();
+    current.keepIds = [];
+    current.keepRightIds = [];
+    current.anchorIds = [];
+    current.anchorRightIds = [];
   }, {capture:true});
 }
 """
