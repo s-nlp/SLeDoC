@@ -52,6 +52,11 @@ def _escape(s: str) -> str:
     return html.escape(s or "", quote=False).replace("\n", "<br>")
 
 
+def _norm(s: str) -> str:
+    """Normalize for robust text matching: collapse spaces and casefold."""
+    return re.sub(r"\s+", " ", (s or "")).strip().casefold()
+
+
 RUS_STOPWORDS_SHORT = {
     "на",
     "о",
@@ -219,14 +224,64 @@ def _entailment_maps(block: Dict[str, Any]) -> Tuple[Dict[int, int], Dict[int, i
     return ent_L_to_R, ent_R_to_L
 
 
+def _best_right_for_left_anchor(
+    block: Dict[str, Any], li_anchor: int
+) -> Tuple[Optional[int], str]:
+    """
+    For a given LEFT anchor index, pick the RIGHT mate and label to drive the bracket color:
+      - prefer 'contradiction' if any exists,
+      - else 'entailment'/'equivalent' if exists,
+      - else (None, '').
+    """
+    out1 = block.get("output_1") or []
+    out2 = block.get("output_2") or []
+    if not (0 <= li_anchor < len(out1)):
+        return None, ""
+    idx1 = _index_claims(out1)
+    idx2 = _index_claims(out2)
+    best_contra: Optional[int] = None
+    best_ent: Optional[int] = None
+    for r in block.get("nli_results") or []:
+        prem = str(r.get("premise_raw") or r.get("premise") or "")
+        hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+        lab = str(r.get("label") or "").lower()
+        # map to indices (either orientation)
+        li = idx1.get(prem, None)
+        rj = idx2.get(hyp, None)
+        if li is None or rj is None:
+            li = idx1.get(hyp, None)
+            rj = idx2.get(prem, None)
+        if li != li_anchor or rj is None:
+            continue
+        if lab == "contradiction" and best_contra is None:
+            best_contra = rj
+        elif lab in ("entailment", "equivalent") and best_ent is None:
+            best_ent = rj
+    if best_contra is not None:
+        return best_contra, "contradiction"
+    if best_ent is not None:
+        return best_ent, "entailment"
+    return None, ""
+
+
 def _build_addition_anchors(
     block: Dict[str, Any],
-) -> Tuple[Dict[int, int], Dict[int, int], Dict[int, int]]:
+) -> Tuple[
+    Dict[int, int],  # left_addition_anchor[left_idx] -> left_anchor_idx
+    Dict[int, int],  # right_add_to_left_anchor[right_idx] -> left_anchor_idx
+    Dict[int, int],  # right_add_to_right_anchor[right_idx] -> right_anchor_idx
+    Dict[str, int],  # right_text_to_left_anchor[normed_right_text] -> left_anchor_idx
+    Dict[
+        int, Tuple[Optional[int], str]
+    ],  # left_anchor_to_right_anchor[left_anchor_idx] -> (right_idx or None, label_for_brackets)
+]:
     """
-    Returns three maps:
+    Returns four maps:
       1) left_addition_anchor[left_idx] -> left_anchor_idx
       2) right_addition_to_left_anchor[right_idx] -> left_anchor_idx
       3) right_addition_to_right_anchor[right_idx] -> right_anchor_idx (if anchor text exists on B)
+      4) right_text_to_left_anchor[normed_right_text] -> left_anchor_idx (when right_idx could not be resolved)
+
     We use:
       - r['anchor'] when present (index into left/output_1),
       - fallback: treat the matched left span as anchor,
@@ -241,9 +296,13 @@ def _build_addition_anchors(
     left_addition_anchor: Dict[int, int] = {}
     right_add_to_left_anchor: Dict[int, int] = {}
     right_add_to_right_anchor: Dict[int, int] = {}
+    right_text_to_left_anchor: Dict[str, int] = {}
+    left_anchor_to_right_anchor: Dict[int, Tuple[Optional[int], str]] = {}
 
     # Pre-compute sorted right indices that have any entailment (for "closest green before" fallback)
     ent_right_idxs_sorted = sorted(ent_R_to_L.keys())
+    # Normalized index for right claim text → j
+    idx2_norm = {_norm(_get_claim_text(c)): j for j, c in enumerate(out2 or [])}
 
     for r in block.get("nli_results") or []:
         lbl = str(r.get("label") or "").lower()
@@ -258,8 +317,13 @@ def _build_addition_anchors(
         rj = (
             idx2.get(hyp) if hyp in idx2 else (idx2.get(prem) if prem in idx2 else None)
         )
-        if li is None and rj is None:
-            continue
+        # If we still have no rj, try to map by normalized right text
+        if rj is None:
+            # prefer the text that belongs to the right side (hypothesis in our pipeline)
+            cand = hyp if hyp not in (None, "") else prem
+            nj = idx2_norm.get(_norm(cand))
+            if nj is not None:
+                rj = nj
 
         anc_li: Optional[int] = r.get("anchor")
         if not isinstance(anc_li, int) or not (0 <= int(anc_li) < len(out1)):
@@ -295,10 +359,13 @@ def _build_addition_anchors(
                 # no left mapping at all: prefer index 1 if exists (treat as "first addition")
                 anc_li = 1 if len(out1) > 1 else 0
 
-        # Decide right-side anchor to show in-pane (prefer the entailing mate of anc_li)
+        # Decide RIGHT-side anchor for brackets using the anchor's *own* best link (contra > ent)
         anc_rj: Optional[int] = None
-        if anc_li is not None and anc_li in ent_L_to_R:
-            anc_rj = ent_L_to_R[anc_li]
+        anc_lbl: str = ""
+        if anc_li is not None:
+            anc_rj, anc_lbl = _best_right_for_left_anchor(block, anc_li)
+            if anc_li not in left_anchor_to_right_anchor:
+                left_anchor_to_right_anchor[anc_li] = (anc_rj, anc_lbl)
         # if not found yet but we left a right-side anchor above, keep it
         if anc_rj is None and rj is not None and rj in right_add_to_right_anchor:
             anc_rj = right_add_to_right_anchor[rj]
@@ -309,10 +376,21 @@ def _build_addition_anchors(
             left_addition_anchor[li] = int(anc_li)
         if anc_li is not None and rj is not None:
             right_add_to_left_anchor[rj] = int(anc_li)
+        # If we couldn't resolve rj but do have the text → keep a text→anchor map
+        if anc_li is not None and rj is None:
+            cand = hyp if hyp not in (None, "") else prem
+            if cand:
+                right_text_to_left_anchor[_norm(cand)] = int(anc_li)
         if anc_rj is not None and rj is not None and anc_rj != rj:
             right_add_to_right_anchor[rj] = int(anc_rj)
 
-    return left_addition_anchor, right_add_to_left_anchor, right_add_to_right_anchor
+    return (
+        left_addition_anchor,
+        right_add_to_left_anchor,
+        right_add_to_right_anchor,
+        right_text_to_left_anchor,
+        left_anchor_to_right_anchor,
+    )
 
 
 # cache to avoid repeat calls for same (left,right)
@@ -567,6 +645,37 @@ def _link_map_for_pair(
         if cur is None or sev.get(lbl, 0) > sev.get(cur, 0):
             left_color[i_left] = lbl
 
+    # Synthesize links for additions pointing to a LEFT anchor (so right addition spans have a mate)
+    out1 = block.get("output_1") or []
+    out2 = block.get("output_2") or []
+    idx2 = _index_claims(out2)
+    idx2_norm = {_norm(_get_claim_text(c)): j for j, c in enumerate(out2 or [])}
+    for r in block.get("nli_results") or []:
+        lab = str(r.get("label") or "").lower()
+        if lab not in ("neutral", "addition"):
+            continue
+        anc = r.get("anchor")
+        if not isinstance(anc, int) or not (0 <= anc < len(out1)):
+            continue
+        prem = str(r.get("premise_raw") or r.get("premise") or "")
+        hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+        rj = idx2.get(hyp)
+        if rj is None:
+            rj = idx2.get(prem)
+        if rj is None:
+            # last try: normalized lookup
+            cand = hyp or prem
+            rj = idx2_norm.get(_norm(cand))
+        if rj is None:
+            continue
+        # avoid duplicates
+        lst = out_links.setdefault(anc, [])
+        if (rj, "addition") not in lst:
+            lst.append((rj, "addition"))
+        cur = left_color.get(anc)
+        if cur is None or sev.get("addition", 0) > sev.get(cur, 0):
+            left_color[anc] = "addition"
+
     return out_links, left_color
 
 
@@ -603,9 +712,13 @@ def _render_left(
         out1 = b.get("output_1") or []
         links, left_color = _link_map_for_pair(b)
         # Build anchor maps (so additions snap to anchors)
-        left_add_anchor, right_add_to_left_anchor, right_add_to_right_anchor = (
-            _build_addition_anchors(b)
-        )
+        (
+            left_add_anchor,
+            right_add_to_left_anchor,
+            right_add_to_right_anchor,
+            _right_text_to_left_anchor,
+            left_anchor_to_right_anchor,
+        ) = _build_addition_anchors(b)
         # We also need "where does a LEFT anchor point on the RIGHT?" → use entailment map
         ent_L_to_R, _ent_R_to_L = _entailment_maps(b)
 
@@ -658,8 +771,11 @@ def _render_left(
                 # Decide if THIS left span is an addition and compute anchors
                 is_add = i1 in left_add_anchor
                 anc_li = left_add_anchor.get(i1)
-                # Right anchor index for this left anchor (prefer entailing mate)
-                anc_rj = ent_L_to_R.get(anc_li) if anc_li is not None else None
+
+                # RIGHT anchor for brackets (contra>ent) derived from the left anchor itself
+                anc_rj = None
+                if anc_li is not None and anc_li in left_anchor_to_right_anchor:
+                    anc_rj, _anc_lbl = left_anchor_to_right_anchor[anc_li]
 
                 # Cross-doc mate target:
                 # - for additions → point to RIGHT *anchor* if available
@@ -724,6 +840,8 @@ def _embed_right_claims_in_paragraph(
     contra_terms: Optional[Dict[str, List[str]]],
     anchor_idx_for_right: Optional[Dict[int, int]] = None,
     anchor_text_for_right: Optional[Dict[int, str]] = None,
+    fallback_left_anchor_by_text: Optional[Dict[str, int]] = None,
+    left_anchor_to_right_anchor: Optional[Dict[int, Tuple[Optional[int], str]]] = None,
 ) -> str:
     """
     Return the FULL Document B paragraph with all right-claims embedded in-place
@@ -792,14 +910,46 @@ def _embed_right_claims_in_paragraph(
             # Addition wiring: point to *left* anchor if provided; attach *right* in-pane anchor id.
             extras = []
             is_add = lbl in ("neutral", "addition")
+            # If we have no model label but can infer via text→anchor mapping → treat as addition
+            left_anchor_idx_fallback: Optional[int] = None
+            if not is_add and fallback_left_anchor_by_text:
+                left_anchor_idx_fallback = fallback_left_anchor_by_text.get(_norm(seg))
+                if left_anchor_idx_fallback is not None:
+                    is_add = True
+                    lbl = "addition"
+                    cls = "hl addition"
+                    self_col = _hover_color("addition")
             if is_add:
                 extras.append('data-kind="addition"')
                 # left anchor (cross-doc): if known, point to it and store for JS highlight
                 if anchor_idx_for_right and j_hit in anchor_idx_for_right:
                     const_li_anchor = anchor_idx_for_right[j_hit]
                     target_attr = f' data-target="L-{k}-{const_li_anchor}"'
-                    hcolor_attr = f' data-hcolor="{_hover_color("entailment")}"'
+                    # bracket color comes from the anchor's own best link (contra > ent). Fall back to green.
+                    anc_col_lbl = "entailment"
+                    if (
+                        left_anchor_to_right_anchor
+                        and const_li_anchor in left_anchor_to_right_anchor
+                    ):
+                        _rj_anchor, _lbl = left_anchor_to_right_anchor[const_li_anchor]
+                        if _lbl in ("contradiction", "entailment"):
+                            anc_col_lbl = _lbl
+                    hcolor_attr = f' data-hcolor="{_hover_color(anc_col_lbl)}"'
                     extras.append(f'data-lanchor="L-{k}-{const_li_anchor}"')
+                elif left_anchor_idx_fallback is not None:
+                    target_attr = f' data-target="L-{k}-{left_anchor_idx_fallback}"'
+                    anc_col_lbl = "entailment"
+                    if (
+                        left_anchor_to_right_anchor
+                        and left_anchor_idx_fallback in left_anchor_to_right_anchor
+                    ):
+                        _rj_anchor, _lbl = left_anchor_to_right_anchor[
+                            left_anchor_idx_fallback
+                        ]
+                        if _lbl in ("contradiction", "entailment"):
+                            anc_col_lbl = _lbl
+                    hcolor_attr = f' data-hcolor="{_hover_color(anc_col_lbl)}"'
+                    extras.append(f'data-lanchor="L-{k}-{left_anchor_idx_fallback}"')
                 # Right in-pane anchor (same text claim on B)
                 if anchor_text_for_right and j_hit in anchor_text_for_right:
                     anc_txt = anchor_text_for_right[j_hit]
@@ -901,9 +1051,13 @@ def _render_right_col(
     # FULL paragraph of Document B with right-claims embedded in-place (preserve order)
     paragraph_b = _text_right(b)
     # Build addition anchors so right additions can carry both left & right anchors
-    left_add_anchor, right_add_to_left_anchor, right_add_to_right_anchor = (
-        _build_addition_anchors(b)
-    )
+    (
+        left_add_anchor,
+        right_add_to_left_anchor,
+        right_add_to_right_anchor,
+        right_text_to_left_anchor,
+        left_anchor_to_right_anchor,
+    ) = _build_addition_anchors(b)
     # For the embedder, pass:
     #   - left anchor indices for cross-doc target + data-lanchor
     #   - the exact right anchor TEXT (so it can locate the right in-pane anchor by text)
@@ -936,6 +1090,8 @@ def _render_right_col(
         (contra_terms or {}),
         anchor_idx_for_right=right_add_to_left_anchor,  # for data-lanchor + cross-doc target
         anchor_text_for_right=anchor_text_for_right,  # for data-ranchor (in-pane)
+        fallback_left_anchor_by_text=right_text_to_left_anchor,  # anchor by text if no rj
+        left_anchor_to_right_anchor=left_anchor_to_right_anchor,  # color brackets by contra/ent
     )
 
     hdr = f"Document B — claims (pair {k+1})"
@@ -979,16 +1135,21 @@ def _render_reason(blocks, focus):
                 )
 
     if not items:
-        # fallback: worst label among links of this left span
-        links, _ = _link_map_for_pair(b)
-        sev = {"contradiction": 3, "addition": 2, "neutral": 2, "entailment": 1}
-        worst = None
-        for _rj, lbl in links.get(i_left, []):
-            if sev.get(lbl, 0) > sev.get(worst or "", 0):
-                worst = lbl
-        reason = REASON_BY_LABEL.get(worst or "neutral", "")
-        if reason:
-            items = [f'<div class="reason-card">{html.escape(str(reason))}</div>']
+        # If a left anchor is selected and there exists an addition pointing to it → use its reason
+        for r in b.get("nli_results") or []:
+            lab = str(r.get("label") or "").lower()
+            if lab in ("addition", "neutral") and r.get("anchor") == i_left:
+                reason = (
+                    r.get("explanation")
+                    or r.get("reason")
+                    or r.get("reasoning")
+                    or REASON_BY_LABEL.get("addition", "")
+                )
+                if reason:
+                    items = [
+                        f'<div class="reason-card">{html.escape(str(reason))}</div>'
+                    ]
+                break
 
     return (
         '<div class="reason-wrap"><div class="reason-title"><b>Explanation</b></div>'
@@ -1179,13 +1340,21 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                 or not (0 <= best_li < len(out1))
                 or not (0 <= rj < len(out2))
             ):
-                # Fallback: just show the paragraph focus
-                return (
-                    _render_left(ps or []),
-                    _render_right_col(ps or [], (k, None)),
-                    _render_reason(ps or [], (k, None)),
-                    gr.update(value=str(k + 1)),
-                )
+                # Extra fallback: use synthesized anchors for right additions
+                try:
+                    _la, _r2l, _r2r, _txt2l = _build_addition_anchors(block)
+                    if rj in _r2l:
+                        best_li = _r2l[rj]
+                except Exception:
+                    best_li = None
+                if best_li is None or not (0 <= best_li < len(out1)):
+                    # last resort: just show the paragraph
+                    return (
+                        _render_left(ps or []),
+                        _render_right_col(ps or [], (k, None)),
+                        _render_reason(ps or [], (k, None)),
+                        gr.update(value=str(k + 1)),
+                    )
             left_text = str(
                 out1[best_li].get("claim") or out1[best_li].get("input") or ""
             )
