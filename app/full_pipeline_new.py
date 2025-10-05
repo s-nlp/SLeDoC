@@ -274,6 +274,7 @@ def _build_addition_anchors(
     Dict[
         int, Tuple[Optional[int], str]
     ],  # left_anchor_to_right_anchor[left_anchor_idx] -> (right_idx or None, label_for_brackets)
+    Dict[int, int],  # left_add_to_right_add[left_idx_addition] -> right_idx_addition
 ]:
     """
     Returns four maps:
@@ -298,6 +299,7 @@ def _build_addition_anchors(
     right_add_to_right_anchor: Dict[int, int] = {}
     right_text_to_left_anchor: Dict[str, int] = {}
     left_anchor_to_right_anchor: Dict[int, Tuple[Optional[int], str]] = {}
+    left_add_to_right_add: Dict[int, int] = {}
 
     # Pre-compute sorted right indices that have any entailment (for "closest green before" fallback)
     ent_right_idxs_sorted = sorted(ent_R_to_L.keys())
@@ -374,6 +376,9 @@ def _build_addition_anchors(
         # Mark mappings
         if anc_li is not None and li is not None and li != anc_li:
             left_addition_anchor[li] = int(anc_li)
+        # If this (li, rj) is an explicit addition pair, remember the direct mate
+        if anc_li is not None and li is not None and rj is not None:
+            left_add_to_right_add[li] = int(rj)
         if anc_li is not None and rj is not None:
             right_add_to_left_anchor[rj] = int(anc_li)
         # If we couldn't resolve rj but do have the text → keep a text→anchor map
@@ -390,6 +395,7 @@ def _build_addition_anchors(
         right_add_to_right_anchor,
         right_text_to_left_anchor,
         left_anchor_to_right_anchor,
+        left_add_to_right_add,
     )
 
 
@@ -413,12 +419,14 @@ async def _llm_delta_terms_async(
     try:
         client, mid = make_async_client(model_id)
         prompt = (
-            "Two spans describe the same fact, but span_2 contains some ADDITIONAL details.\n"
-            "Your task: extract SHORT key words/phrases (1–4 words) that are present in one span but not the other,\n"
-            "with focus on the NEW pieces found in span_2 compared to span_1.\n"
-            "Return JSON ONLY in this exact form:\n"
+            "Two spans describe the same fact, but span_2 contains ADDITIONAL details.\n"
+            "Extract SHORT key words/phrases (1–4 words) that occur in one span and not the other.\n"
+            "- Focus on NEW pieces in span_2 vs span_1 (list them under from_span_2).\n"
+            "- Remove stopwords, keep noun/NP-ish or numeric tokens if possible.\n"
+            "- Lowercase; no punctuation-only items.\n"
+            "Return JSON ONLY:\n"
             '{"from_span_1": ["..."], "from_span_2": ["..."]}\n'
-            "Do not add any commentary.\n\n"
+            "No commentary.\n\n"
             f"span_1 (anchor): {span_1}\n"
             f"span_2 (addition): {span_2}\n"
         )
@@ -825,6 +833,7 @@ def _render_left(
             right_add_to_right_anchor,
             _right_text_to_left_anchor,
             left_anchor_to_right_anchor,
+            left_add_to_right_add,
         ) = _build_addition_anchors(b)
         # We also need "where does a LEFT anchor point on the RIGHT?" → use entailment map
         ent_L_to_R, _ent_R_to_L = _entailment_maps(b)
@@ -917,6 +926,10 @@ def _render_left(
                         extras.append(f'data-lanchor="L-{pi}-{anc_li}"')
                         if is_self_anchor:
                             extras.append('data-selfanchor="1"')
+                    # Point to the *actual* right addition partner (blue → brackets on click)
+                    j_add = left_add_to_right_add.get(i1)
+                    if j_add is not None:
+                        extras.append(f'data-ranchor="R-{pi}-{j_add}"')
                     if anc_rj is not None:
                         extras.append(f'data-ranchor="R-{pi}-{anc_rj}"')
                 extra_attr = (" " + " ".join(extras)) if extras else ""
@@ -960,6 +973,7 @@ def _embed_right_claims_in_paragraph(
     anchor_text_for_right: Optional[Dict[int, str]] = None,
     fallback_left_anchor_by_text: Optional[Dict[str, int]] = None,
     left_anchor_to_right_anchor: Optional[Dict[int, Tuple[Optional[int], str]]] = None,
+    left_add_to_right_add: Optional[Dict[int, int]] = None,
 ) -> str:
     """
     Return the FULL Document B paragraph with all right-claims embedded in-place
@@ -1074,32 +1088,16 @@ def _embed_right_claims_in_paragraph(
                     r_anchor = idx2.get(anc_txt)
                     if r_anchor is not None and r_anchor != j_hit:
                         extras.append(f'data-ranchor="R-{k}-{r_anchor}"')
-                # self-anchored (right side): anchor maps back to this very right span
-                # detect via entailing mate of left anchor == j_hit
-                try:
-                    if (
-                        is_add
-                        and anchor_idx_for_right
-                        and j_hit in anchor_idx_for_right
-                    ):
-                        la = anchor_idx_for_right[j_hit]
-                        # find entailing right for this left anchor
-                        ent_L_to_R, _ = _entailment_maps(
-                            {"output_1": out2, "output_2": out2, "nli_results": []}
-                        )  # dummy, not used
-                    # simpler robust check: if target points back to same right index via left_anchor_to_right_anchor
-                    if (
-                        is_add
-                        and left_anchor_to_right_anchor
-                        and anchor_idx_for_right
-                        and j_hit in anchor_idx_for_right
-                    ):
-                        la = anchor_idx_for_right[j_hit]
-                        r_anchor, _lbl = left_anchor_to_right_anchor.get(la, (None, ""))
-                        if r_anchor == j_hit:
-                            extras.append('data-selfanchor="1"')
-                except Exception:
-                    pass
+                # True self-anchored RIGHT: left_add_to_right_add[la] == j_hit
+                if (
+                    is_add
+                    and anchor_idx_for_right
+                    and j_hit in anchor_idx_for_right
+                    and left_add_to_right_add
+                ):
+                    la = anchor_idx_for_right[j_hit]
+                    if left_add_to_right_add.get(la) == j_hit:
+                        extras.append('data-selfanchor="1"')
             kind_attr = (" " + " ".join(extras)) if extras else ""
 
             # If this is the specific right claim we're focusing on, inject contradicting terms
@@ -1205,6 +1203,7 @@ def _render_right_col(
         right_add_to_right_anchor,
         right_text_to_left_anchor,
         left_anchor_to_right_anchor,
+        left_add_to_right_add,
     ) = _build_addition_anchors(b)
     # For the embedder, pass:
     #   - left anchor indices for cross-doc target + data-lanchor
@@ -1229,31 +1228,31 @@ def _render_right_col(
                 anchor_text_for_right[rj] = _get_claim_text(out2[aj])
 
     # Decide which right span should be "pre-selected":
-    # - if the selected left is an ADDITION, select the **right anchor** (contra > ent mate of the left anchor)
+    # - if the selected left is an ADDITION, prefer the *actual right addition mate*;
+    #   if missing, fall back to the anchor's contra/ent mate.
     selected_rj = target_right_idx
     if i_left is not None:
         try:
             # Build anchors to find left→right anchor mapping
-            (
-                left_add_anchor,
-                _right_add_to_left_anchor,
-                _right_add_to_right_anchor,
-                _right_text_to_left_anchor,
-                left_anchor_to_right_anchor,
-            ) = _build_addition_anchors(b)
             if i_left in (left_add_anchor or {}):
                 li_anchor = left_add_anchor[i_left]
-                if (
-                    left_anchor_to_right_anchor
-                    and li_anchor in left_anchor_to_right_anchor
-                ):
-                    maybe_rj, anc_lbl = left_anchor_to_right_anchor[li_anchor]
+                # 1) try the true right addition mate
+                rj_add = left_add_to_right_add.get(i_left)
+                if rj_add is not None:
+                    selected_rj = rj_add
+                    # keep a stable label for visibility
+                    if not label_for_right.get(rj_add):
+                        label_for_right[rj_add] = "addition"
+                    best_for_right[rj_add] = (li_anchor, "addition")
+                else:
+                    # 2) fallback to the anchor's contra/ent mate
+                    maybe_rj, anc_lbl = (left_anchor_to_right_anchor or {}).get(
+                        li_anchor, (None, "")
+                    )
                     if maybe_rj is not None:
                         selected_rj = maybe_rj
-                        # ensure the right anchor has a visible, persistent color
                         if not label_for_right.get(maybe_rj):
                             label_for_right[maybe_rj] = anc_lbl or "entailment"
-                        # ensure hover/target on the right points back to the anchor on the left with the same label
                         best_for_right[maybe_rj] = (li_anchor, anc_lbl or "entailment")
         except Exception:
             pass
@@ -1270,6 +1269,7 @@ def _render_right_col(
         anchor_text_for_right=anchor_text_for_right,  # for data-ranchor (in-pane)
         fallback_left_anchor_by_text=right_text_to_left_anchor,  # anchor by text if no rj
         left_anchor_to_right_anchor=left_anchor_to_right_anchor,  # color brackets by contra/ent
+        left_add_to_right_add=left_add_to_right_add,  # mark true self-anchors
     )
 
     hdr = f"Document B — claims (pair {k+1})"
@@ -1494,8 +1494,8 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                 # Only contradictions reach here
                 terms = info["terms"]
 
-            # --- Self-anchored ADDITION special case (delta terms) ---
-            # If selected LEFT span is an addition anchored to itself, compute DELTA terms and preselect its right anchor.
+            # Self-anchored ADDITION special case (delta terms on FIRST CLICK)
+            # If LEFT span is an addition anchored to itself, compute DELTA against the *actual right addition mate*.
             try:
                 block = (ps or [])[k]
                 (
@@ -1503,19 +1503,17 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                     _r2l,
                     _r2r,
                     _txt2l,
-                    left_anchor_to_right_anchor,
+                    _left_anchor_to_right_anchor,
+                    left_add_to_right_add,
                 ) = _build_addition_anchors(block)
                 if l_ in (left_add_anchor or {}) and left_add_anchor[l_] == l_:
-                    maybe_rj, _lbl = (left_anchor_to_right_anchor or {}).get(
-                        l_, (None, "")
-                    )
+                    maybe_rj = left_add_to_right_add.get(l_)
                     out1 = block.get("output_1") or []
                     out2 = block.get("output_2") or []
                     if (
                         maybe_rj is not None
                         and 0 <= l_ < len(out1)
                         and 0 <= maybe_rj < len(out2)
-                        and _is_self_anchor_addition(block, l_, maybe_rj)
                     ):
                         left_text = str(
                             out1[l_].get("claim") or out1[l_].get("input") or ""

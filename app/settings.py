@@ -299,7 +299,9 @@ CUSTOM_JS = """
     keepIds: [],          // LEFT keep-bright span IDs
     anchorIds: [],        // LEFT anchors to re-bracket after repaint
     keepRightIds: [],     // RIGHT keep-bright span IDs
-    anchorRightIds: []    // RIGHT anchors to re-bracket after repaint
+    anchorRightIds: [],   // RIGHT anchors to re-bracket after repaint
+    selectedLeftId: null, // persist selection across repaint
+    selectedRightId: null
   };
 
   /* ===== Visual helpers (hover + selection) ===== */
@@ -328,6 +330,8 @@ CUSTOM_JS = """
       el.classList.remove('selected','dimmed','anchor-hl');
       el.style.removeProperty('--anchor-color');
     });
+    current.selectedLeftId = null;
+    current.selectedRightId = null;
     qa('span.hl').forEach(el => {
       const bg = ('_bg' in el.dataset) ? el.dataset._bg : '';
       el.style.backgroundColor = bg || '';
@@ -408,6 +412,14 @@ CUSTOM_JS = """
             const el = q('#' + CSS.escape(id));
             if (el) forceAnchor(el);
           });
+          // re-select the previously selected LEFT span if any
+          if (current.selectedLeftId) {
+            const el = q('#' + CSS.escape(current.selectedLeftId));
+            if (el) {
+              el.classList.add('selected');
+              el.style.outline = '2px solid #000';
+            }
+          }
         }, 0);
       }
     });
@@ -426,6 +438,14 @@ CUSTOM_JS = """
             const el = q('#' + CSS.escape(id));
             if (el) forceAnchor(el);
           });
+          // re-select the previously selected RIGHT span if any
+          if (current.selectedRightId) {
+            const el = q('#' + CSS.escape(current.selectedRightId));
+            if (el) {
+              el.classList.add('selected');
+              el.style.outline = '2px solid #000';
+            }
+          }
         }, 0);
       }
     });
@@ -489,6 +509,8 @@ CUSTOM_JS = """
       const mateId = span.dataset.target;
       // no fill on select — keep only the box
       span.style.outline = '2px solid #000';
+      current.selectedLeftId = span.id;
+      current.selectedRightId = mateId || null;
       if (mateId) {
         const mate = q('#' + CSS.escape(mateId));
         if (mate) {
@@ -557,8 +579,10 @@ CUSTOM_JS = """
       clearSelection();
       span.classList.add('selected');
       span.style.outline = '2px solid #000';
+      current.selectedRightId = span.id;
 
       const mateId = span.dataset.target; // points to L-k-li
+      current.selectedLeftId = mateId || null;
       if (mateId) {
         const mate = q('#' + CSS.escape(mateId));
         if (mate) {
@@ -637,6 +661,8 @@ CUSTOM_JS = """
         current.keepRightIds = [];
         current.anchorIds = [];
         current.anchorRightIds = [];
+        current.selectedLeftId = null;
+        current.selectedRightId = null;
       }
     e.stopImmediatePropagation();
     return;
