@@ -769,6 +769,9 @@ def _render_left(
 
                 # Decide if THIS left span is an addition and compute anchors
                 is_add = i1 in left_add_anchor
+                if is_add:
+                    cls = "hl addition"
+                    self_col = _hover_color("addition")
                 anc_li = left_add_anchor.get(i1)
 
                 # RIGHT anchor for brackets (contra>ent) derived from the left anchor itself
@@ -969,6 +972,10 @@ def _embed_right_claims_in_paragraph(
             else:
                 inner = _escape(seg)
 
+            # Persist selection through re-render if this is the target right span
+            if target_right_idx is not None and j_hit == int(target_right_idx):
+                cls = cls + " selected"
+
             # Only wrap the first occurrence of each claim to avoid duplicates
             if j_hit in used:
                 out.append(_escape(seg))
@@ -1079,13 +1086,40 @@ def _render_right_col(
             if 0 <= aj < len(out2):
                 anchor_text_for_right[rj] = _get_claim_text(out2[aj])
 
+    # Decide which right span should be "pre-selected":
+    # - if the selected left is an ADDITION, select the **right anchor** (contra > ent mate of the left anchor)
+    selected_rj = target_right_idx
+    if i_left is not None:
+        try:
+            # Build anchors to find left→right anchor mapping
+            (
+                left_add_anchor,
+                _right_add_to_left_anchor,
+                _right_add_to_right_anchor,
+                _right_text_to_left_anchor,
+                left_anchor_to_right_anchor,
+            ) = _build_addition_anchors(b)
+            if i_left in (left_add_anchor or {}):
+                li_anchor = left_add_anchor[i_left]
+                if left_anchor_to_right_anchor and li_anchor in left_anchor_to_right_anchor:
+                    maybe_rj, anc_lbl = left_anchor_to_right_anchor[li_anchor]
+                    if maybe_rj is not None:
+                        selected_rj = maybe_rj
+                        # ensure the right anchor has a visible, persistent color
+                        if not label_for_right.get(maybe_rj):
+                            label_for_right[maybe_rj] = anc_lbl or "entailment"
+                        # ensure hover/target on the right points back to the anchor on the left with the same label
+                        best_for_right[maybe_rj] = (li_anchor, anc_lbl or "entailment")
+        except Exception:
+            pass
+
     claims_body = _embed_right_claims_in_paragraph(
         paragraph_b,
         out2,
         k,
         label_for_right,
         best_for_right,
-        target_right_idx,
+        selected_rj,
         (contra_terms or {}),
         anchor_idx_for_right=right_add_to_left_anchor,  # for data-lanchor + cross-doc target
         anchor_text_for_right=anchor_text_for_right,  # for data-ranchor (in-pane)
