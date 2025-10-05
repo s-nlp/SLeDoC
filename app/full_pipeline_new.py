@@ -1105,7 +1105,10 @@ def _render_right_col(
             ) = _build_addition_anchors(b)
             if i_left in (left_add_anchor or {}):
                 li_anchor = left_add_anchor[i_left]
-                if left_anchor_to_right_anchor and li_anchor in left_anchor_to_right_anchor:
+                if (
+                    left_anchor_to_right_anchor
+                    and li_anchor in left_anchor_to_right_anchor
+                ):
                     maybe_rj, anc_lbl = left_anchor_to_right_anchor[li_anchor]
                     if maybe_rj is not None:
                         selected_rj = maybe_rj
@@ -1333,21 +1336,30 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
             _t, a, b = v.split(":")
             k, l_ = int(a), int(b)
             info = _get_precomputed_contra(ps or [], k, l_)
+            terms = None
+            rj = None
             if not info:
+                # Only compute terms if there is a contradiction for this focus.
                 info = _compute_contra_terms_for_focus(
                     ps or [],
                     (k, l_),
                     bool(use_llm_contra),
                     contra_model_id or "gpt-4o",
                 )
-                # store back into cache so subsequent clicks are instant & stable
                 if info:
+                    # store back into cache so subsequent clicks are instant & stable
                     block = (ps or [])[k]
                     cache = block.get("_contra_cache") or {}
                     cache[l_] = info
                     block["_contra_cache"] = cache
-            terms = info["terms"]
-            rj = info["right_idx"]
+            if info:
+                # Only contradictions reach here
+                terms = info["terms"]
+                rj = info["right_idx"]
+
+            # Note: for additions/neutral/entailment → terms=None.
+            # _render_right_col will still preselect the right anchor (contra>ent) if this left is an addition,
+            # and no contra phrases will be highlighted.
             return (
                 _render_left(ps or [], (k, l_), terms),
                 _render_right_col(ps or [], (k, l_), terms, rj),
@@ -1392,13 +1404,19 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                         _render_reason(ps or [], (k, None)),
                         gr.update(value=str(k + 1)),
                     )
-            left_text = str(
-                out1[best_li].get("claim") or out1[best_li].get("input") or ""
-            )
-            right_text = str(out2[rj].get("claim") or out2[rj].get("input") or "")
-            terms = _get_contra_terms(
-                left_text, right_text, bool(use_llm_contra), contra_model_id or "gpt-4o"
-            )
+            # Only compute contradiction terms when the best link label is 'contradiction'
+            terms = None
+            if (best_lbl or "").lower() == "contradiction":
+                left_text = str(
+                    out1[best_li].get("claim") or out1[best_li].get("input") or ""
+                )
+                right_text = str(out2[rj].get("claim") or out2[rj].get("input") or "")
+                terms = _get_contra_terms(
+                    left_text,
+                    right_text,
+                    bool(use_llm_contra),
+                    contra_model_id or "gpt-4o",
+                )
             return (
                 _render_left(ps or [], (k, best_li), terms),
                 _render_right_col(ps or [], (k, best_li), terms, target_right_idx=rj),
@@ -1637,24 +1655,29 @@ with gr.Blocks(
 
                     for r in b.get("nli_results") or []:
                         prem = str(r.get("premise_raw") or r.get("premise") or "")
-                        hyp  = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
-                        lbl  = str(r.get("label") or "").lower()
-                        expl = str(r.get("explanation") or r.get("reason") or r.get("reasoning") or "")
-                    
-                        prem_in_left  = prem in idx1
-                        hyp_in_right  = hyp in idx2
+                        hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+                        lbl = str(r.get("label") or "").lower()
+                        expl = str(
+                            r.get("explanation")
+                            or r.get("reason")
+                            or r.get("reasoning")
+                            or ""
+                        )
+
+                        prem_in_left = prem in idx1
+                        hyp_in_right = hyp in idx2
                         prem_in_right = prem in idx2
-                        hyp_in_left   = hyp in idx1
+                        hyp_in_left = hyp in idx1
 
                         li = None
                         rj = None
-                        left_span  = prem
+                        left_span = prem
                         right_span = hyp
-        
+
                         # 1) Normal orientation (prem on A, hyp on B)
                         if prem_in_left or hyp_in_right:
                             li = idx1.get(prem) if prem_in_left else None
-                            rj = idx2.get(hyp)  if hyp_in_right else None
+                            rj = idx2.get(hyp) if hyp_in_right else None
                             left_span, right_span = prem, hyp
 
                         # 2) True swap (only if BOTH sides actually match swapped)
@@ -1666,7 +1689,11 @@ with gr.Blocks(
                         # 3) Unmatched → handle additions explicitly
                         else:
                             anc_idx = r.get("anchor")
-                            anc_idx = anc_idx if isinstance(anc_idx, int) and 0 <= anc_idx < len(out1) else None
+                            anc_idx = (
+                                anc_idx
+                                if isinstance(anc_idx, int) and 0 <= anc_idx < len(out1)
+                                else None
+                            )
                             if lbl in ("addition", "neutral"):
                                 # right-only addition
                                 if hyp and hyp_in_right:
