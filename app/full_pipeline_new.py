@@ -615,7 +615,7 @@ def _link_map_for_pair(
     idx1 = _index_claims(out1)
     idx2 = _index_claims(out2)
 
-    # severity order
+    # severity order (for LEFT color only we will ignore 'addition'/'neutral')
     sev = {"contradiction": 3, "addition": 2, "neutral": 2, "entailment": 1}
 
     for r in block.get("nli_results") or []:
@@ -640,10 +640,12 @@ def _link_map_for_pair(
             continue
 
         out_links.setdefault(i_left, []).append((i_right, lbl))
-        # update left color to "worst" severity among links
-        cur = left_color.get(i_left)
-        if cur is None or sev.get(lbl, 0) > sev.get(cur, 0):
-            left_color[i_left] = lbl
+        # Update LEFT color only by non-addition labels
+        if lbl in ("contradiction", "entailment", "equivalent"):
+            cur = left_color.get(i_left)
+            norm_lbl = "entailment" if lbl == "equivalent" else lbl
+            if cur is None or sev.get(norm_lbl, 0) > sev.get(cur, 0):
+                left_color[i_left] = norm_lbl
 
     # Synthesize links for additions pointing to a LEFT anchor (so right addition spans have a mate)
     out1 = block.get("output_1") or []
@@ -672,9 +674,6 @@ def _link_map_for_pair(
         lst = out_links.setdefault(anc, [])
         if (rj, "addition") not in lst:
             lst.append((rj, "addition"))
-        cur = left_color.get(anc)
-        if cur is None or sev.get("addition", 0) > sev.get(cur, 0):
-            left_color[anc] = "addition"
 
     return out_links, left_color
 
@@ -1600,23 +1599,51 @@ with gr.Blocks(
 
                     for r in b.get("nli_results") or []:
                         prem = str(r.get("premise_raw") or r.get("premise") or "")
-                        hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
-                        lbl = str(r.get("label") or "").lower()
-                        expl = str(
-                            r.get("explanation")
-                            or r.get("reason")
-                            or r.get("reasoning")
-                            or ""
-                        )
-                        li = idx1.get(prem)
-                        rj = idx2.get(hyp)
-                        # swapped?
-                        if li is None or rj is None:
+                        hyp  = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+                        lbl  = str(r.get("label") or "").lower()
+                        expl = str(r.get("explanation") or r.get("reason") or r.get("reasoning") or "")
+                    
+                        prem_in_left  = prem in idx1
+                        hyp_in_right  = hyp in idx2
+                        prem_in_right = prem in idx2
+                        hyp_in_left   = hyp in idx1
+
+                        li = None
+                        rj = None
+                        left_span  = prem
+                        right_span = hyp
+        
+                        # 1) Normal orientation (prem on A, hyp on B)
+                        if prem_in_left or hyp_in_right:
+                            li = idx1.get(prem) if prem_in_left else None
+                            rj = idx2.get(hyp)  if hyp_in_right else None
+                            left_span, right_span = prem, hyp
+
+                        # 2) True swap (only if BOTH sides actually match swapped)
+                        elif prem_in_right and hyp_in_left:
                             li = idx1.get(hyp)
                             rj = idx2.get(prem)
                             left_span, right_span = hyp, prem
+
+                        # 3) Unmatched → handle additions explicitly
                         else:
-                            left_span, right_span = prem, hyp
+                            anc_idx = r.get("anchor")
+                            anc_idx = anc_idx if isinstance(anc_idx, int) and 0 <= anc_idx < len(out1) else None
+                            if lbl in ("addition", "neutral"):
+                                # right-only addition
+                                if hyp and hyp_in_right:
+                                    li = anc_idx
+                                    rj = idx2.get(hyp)
+                                    left_span, right_span = "", hyp
+                                # left-only addition
+                                elif prem and prem_in_left:
+                                    li = idx1.get(prem)
+                                    rj = None
+                                    left_span, right_span = prem, ""
+                                else:
+                                    li = anc_idx
+                                    rj = None
+                                    left_span, right_span = "", ""
                         anc_idx, anc_text = _anchor_payload(r)
                         rows.append(
                             {
