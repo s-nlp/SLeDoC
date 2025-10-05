@@ -395,10 +395,78 @@ def _build_addition_anchors(
 
 # cache to avoid repeat calls for same (left,right)
 _CONTRA_CACHE: Dict[str, Dict[str, List[str]]] = {}
+_DELTA_CACHE: Dict[str, Dict[str, List[str]]] = {}  # for addition “delta” terms
 
 
 def _hash_pair(a: str, b: str) -> str:
     return hashlib.sha1((a + "␞" + b).encode("utf-8")).hexdigest()
+
+
+async def _llm_delta_terms_async(
+    span_1: str, span_2: str, model_id: str
+) -> Dict[str, List[str]]:
+    """
+    Ask LLM for the ADDED words/phrases (delta) between span_1 (anchor) and span_2 (addition).
+    Returns {"from_span_1":[...], "from_span_2":[...]} where from_span_2 should primarily contain
+    the new info present in span_2 but absent in span_1. Fallback: token diff.
+    """
+    try:
+        client, mid = make_async_client(model_id)
+        prompt = (
+            "Two spans describe the same fact, but span_2 contains some ADDITIONAL details.\n"
+            "Your task: extract SHORT key words/phrases (1–4 words) that are present in one span but not the other,\n"
+            "with focus on the NEW pieces found in span_2 compared to span_1.\n"
+            "Return JSON ONLY in this exact form:\n"
+            '{"from_span_1": ["..."], "from_span_2": ["..."]}\n'
+            "Do not add any commentary.\n\n"
+            f"span_1 (anchor): {span_1}\n"
+            f"span_2 (addition): {span_2}\n"
+        )
+        try:
+            resp = await client.chat.completions.create(
+                model=mid,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.01,
+                response_format={"type": "json_object"},
+            )
+            data = json.loads(resp.choices[0].message.content or "{}")
+        finally:
+            try:
+                closer = getattr(client, "aclose", None) or getattr(
+                    client, "close", None
+                )
+                if closer:
+                    res = closer()
+                    if asyncio.iscoroutine(res):
+                        await res
+            except Exception:
+                pass
+        a = [str(x).strip() for x in data.get("from_span_1", []) if str(x).strip()]
+        b = [str(x).strip() for x in data.get("from_span_2", []) if str(x).strip()]
+        if not a and not b:
+            raise ValueError("empty LLM delta result")
+        return {"from_span_1": a, "from_span_2": b}
+    except Exception:
+        # Fallback: symmetric token diff (same as contradiction). Good enough to surface additions.
+        return _fallback_contra_terms(span_1, span_2)
+
+
+def _get_delta_terms(
+    anchor_text: str, addition_text: str, use_llm: bool, model_id: str
+):
+    key = _hash_pair(anchor_text, addition_text) + (
+        "#delta_llm" if use_llm else "#delta_diff"
+    )
+    if key in _DELTA_CACHE:
+        return _DELTA_CACHE[key]
+    if use_llm:
+        result = _run_coro_sync(
+            _llm_delta_terms_async(anchor_text, addition_text, model_id)
+        )
+    else:
+        result = _fallback_contra_terms(anchor_text, addition_text)
+    _DELTA_CACHE[key] = result
+    return result
 
 
 def _fallback_contra_terms(left: str, right: str) -> Dict[str, List[str]]:
@@ -598,6 +666,46 @@ def _compute_contra_terms_for_focus(
     return {"terms": terms, "right_idx": rj}
 
 
+def _map_record_indices(
+    block: Dict[str, Any], r: Dict[str, Any]
+) -> Tuple[Optional[int], Optional[int]]:
+    """Map one nli_results record to (left_idx, right_idx) if possible (either orientation)."""
+    out1 = block.get("output_1") or []
+    out2 = block.get("output_2") or []
+    idx1 = _index_claims(out1)
+    idx2 = _index_claims(out2)
+    prem = str(r.get("premise_raw") or r.get("premise") or "")
+    hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+    li = idx1.get(prem)
+    rj = idx2.get(hyp)
+    if li is None or rj is None:
+        li = idx1.get(hyp)
+        rj = idx2.get(prem)
+    return li, rj
+
+
+def _is_self_anchor_addition(
+    block: Dict[str, Any], li: Optional[int], rj: Optional[int]
+) -> bool:
+    """Return True if there exists an addition/neutral record whose anchor == li and maps to rj."""
+    if li is None or rj is None:
+        return False
+    out1 = block.get("output_1") or []
+    if not (0 <= li < len(out1)):
+        return False
+    for rec in block.get("nli_results") or []:
+        lab = str(rec.get("label") or "").lower()
+        if lab not in ("addition", "neutral"):
+            continue
+        anc = rec.get("anchor")
+        if not isinstance(anc, int) or anc != li:
+            continue
+        li2, rj2 = _map_record_indices(block, rec)
+        if rj2 == rj:
+            return True
+    return False
+
+
 def _link_map_for_pair(
     block: Dict[str, Any],
 ) -> Tuple[Dict[int, List[Tuple[int, str]]], Dict[int, str]]:
@@ -777,6 +885,8 @@ def _render_left(
                     cls = "hl addition"
                     self_col = _hover_color("addition")
                 anc_li = left_add_anchor.get(i1)
+                # mark self-anchored (addition anchored to itself)
+                is_self_anchor = is_add and (anc_li == i1)
 
                 # RIGHT anchor for brackets (contra>ent) derived from the left anchor itself
                 anc_rj = None
@@ -805,6 +915,8 @@ def _render_left(
                     extras.append('data-kind="addition"')
                     if anc_li is not None:
                         extras.append(f'data-lanchor="L-{pi}-{anc_li}"')
+                        if is_self_anchor:
+                            extras.append('data-selfanchor="1"')
                     if anc_rj is not None:
                         extras.append(f'data-ranchor="R-{pi}-{anc_rj}"')
                 extra_attr = (" " + " ".join(extras)) if extras else ""
@@ -962,6 +1074,32 @@ def _embed_right_claims_in_paragraph(
                     r_anchor = idx2.get(anc_txt)
                     if r_anchor is not None and r_anchor != j_hit:
                         extras.append(f'data-ranchor="R-{k}-{r_anchor}"')
+                # self-anchored (right side): anchor maps back to this very right span
+                # detect via entailing mate of left anchor == j_hit
+                try:
+                    if (
+                        is_add
+                        and anchor_idx_for_right
+                        and j_hit in anchor_idx_for_right
+                    ):
+                        la = anchor_idx_for_right[j_hit]
+                        # find entailing right for this left anchor
+                        ent_L_to_R, _ = _entailment_maps(
+                            {"output_1": out2, "output_2": out2, "nli_results": []}
+                        )  # dummy, not used
+                    # simpler robust check: if target points back to same right index via left_anchor_to_right_anchor
+                    if (
+                        is_add
+                        and left_anchor_to_right_anchor
+                        and anchor_idx_for_right
+                        and j_hit in anchor_idx_for_right
+                    ):
+                        la = anchor_idx_for_right[j_hit]
+                        r_anchor, _lbl = left_anchor_to_right_anchor.get(la, (None, ""))
+                        if r_anchor == j_hit:
+                            extras.append('data-selfanchor="1"')
+                except Exception:
+                    pass
             kind_attr = (" " + " ".join(extras)) if extras else ""
 
             # If this is the specific right claim we're focusing on, inject contradicting terms
@@ -1355,7 +1493,47 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
             if info:
                 # Only contradictions reach here
                 terms = info["terms"]
-                rj = info["right_idx"]
+
+            # --- Self-anchored ADDITION special case (delta terms) ---
+            # If selected LEFT span is an addition anchored to itself, compute DELTA terms and preselect its right anchor.
+            try:
+                block = (ps or [])[k]
+                (
+                    left_add_anchor,
+                    _r2l,
+                    _r2r,
+                    _txt2l,
+                    left_anchor_to_right_anchor,
+                ) = _build_addition_anchors(block)
+                if l_ in (left_add_anchor or {}) and left_add_anchor[l_] == l_:
+                    maybe_rj, _lbl = (left_anchor_to_right_anchor or {}).get(
+                        l_, (None, "")
+                    )
+                    out1 = block.get("output_1") or []
+                    out2 = block.get("output_2") or []
+                    if (
+                        maybe_rj is not None
+                        and 0 <= l_ < len(out1)
+                        and 0 <= maybe_rj < len(out2)
+                        and _is_self_anchor_addition(block, l_, maybe_rj)
+                    ):
+                        left_text = str(
+                            out1[l_].get("claim") or out1[l_].get("input") or ""
+                        )
+                        right_text = str(
+                            out2[maybe_rj].get("claim")
+                            or out2[maybe_rj].get("input")
+                            or ""
+                        )
+                        terms = _get_delta_terms(
+                            left_text,
+                            right_text,
+                            bool(use_llm_contra),
+                            contra_model_id or "gpt-4o",
+                        )
+                        rj = maybe_rj
+            except Exception:
+                pass
 
             # Note: for additions/neutral/entailment → terms=None.
             # _render_right_col will still preselect the right anchor (contra>ent) if this left is an addition,
@@ -1417,6 +1595,26 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                     bool(use_llm_contra),
                     contra_model_id or "gpt-4o",
                 )
+            else:
+                # Self-anchored addition? then extract DELTA terms and bracket both as anchors.
+                try:
+                    if _is_self_anchor_addition(block, best_li, rj):
+                        left_text = str(
+                            out1[best_li].get("claim")
+                            or out1[best_li].get("input")
+                            or ""
+                        )
+                        right_text = str(
+                            out2[rj].get("claim") or out2[rj].get("input") or ""
+                        )
+                        terms = _get_delta_terms(
+                            left_text,
+                            right_text,
+                            bool(use_llm_contra),
+                            contra_model_id or "gpt-4o",
+                        )
+                except Exception:
+                    pass
             return (
                 _render_left(ps or [], (k, best_li), terms),
                 _render_right_col(ps or [], (k, best_li), terms, target_right_idx=rj),

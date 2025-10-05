@@ -107,11 +107,17 @@ BASE_CSS = """
 .hl.dimmed{
   filter:saturate(.3) brightness(.95);
 }
-/* Stronger, visible dimming only in the left pane */
+/* Stronger, visible dimming in the left pane */
 #left_pane .hl.dimmed{
   opacity:.35;
   filter:grayscale(.25) saturate(.2) brightness(.85);
   transition:opacity .12s ease, filter .12s ease;
+}
+/* Right-pane dimming (light, but visible). Keep anchor/mate bright. */
+#right_pane .hl.dimmed{
+  opacity:.5;
+  filter: grayscale(.1) saturate(.4) brightness(.9);
+  transition: opacity .12s ease, filter .12s ease;
 }
 /* Force-anchor highlight (color set via --anchor-color; brackets handled in EXTRA_CSS) */
 .anchor-hl{
@@ -289,7 +295,11 @@ CUSTOM_JS = """
 
   /* Which left paragraph (pair) is focused + which left spans must stay bright */
   const current = {
-    idx: null, keepIds: [], anchorIds: [], anchorRightIds: []
+    idx: null,
+    keepIds: [],          // LEFT keep-bright span IDs
+    anchorIds: [],        // LEFT anchors to re-bracket after repaint
+    keepRightIds: [],     // RIGHT keep-bright span IDs
+    anchorRightIds: []    // RIGHT anchors to re-bracket after repaint
   };
 
   /* ===== Visual helpers (hover + selection) ===== */
@@ -349,6 +359,21 @@ CUSTOM_JS = """
     qa('#left_pane .hl.dimmed').forEach(el => el.classList.remove('dimmed'));
   }
 
+  /* span dimming in RIGHT pane */
+  function dimRightSpansExcept(keepIds = []) {
+    const keep = new Set(keepIds);
+    qa('#right_pane .hl').forEach(el => {
+      if (keep.has(el.id)) {
+        el.classList.remove('dimmed');
+      } else {
+        el.classList.add('dimmed');
+      }
+    });
+  }
+  function clearRightSpanDimming(){
+    qa('#right_pane .hl.dimmed').forEach(el => el.classList.remove('dimmed'));
+  }
+
   /* ===== Paragraph dimming (left pane) ===== */
   function dimParagraphs(idx){
     if (idx == null) return;
@@ -387,6 +412,24 @@ CUSTOM_JS = """
       }
     });
     obs.observe(L, { childList: true, subtree: true, characterData: true });
+  })();
+
+  /* Reapply RIGHT dimming/anchors after right HTML repaints */
+  (function observeRightRepaints(){
+    const R = q('#right_pane');
+    if (!R || !('MutationObserver' in window)) return;
+    const obs = new MutationObserver(() => {
+      if (current.keepRightIds && current.keepRightIds.length){
+        setTimeout(() => {
+          dimRightSpansExcept(current.keepRightIds);
+          (current.anchorRightIds || []).forEach(id => {
+            const el = q('#' + CSS.escape(id));
+            if (el) forceAnchor(el);
+          });
+        }, 0);
+      }
+    });
+    obs.observe(R, { childList: true, subtree: true, characterData: true });
   })();
 
   /* ===== Bridge to Python (hidden textbox) ===== */
@@ -455,6 +498,16 @@ CUSTOM_JS = """
           if (span.dataset.kind === 'addition') forceAnchor(mate);
         }
       }
+      // RIGHT dimming: keep mate + right in-pane anchor if any
+      const keepRight = [];
+      if (mateId) keepRight.push(mateId);
+      if (span.dataset.kind === 'addition' && span.dataset.ranchor) keepRight.push(span.dataset.ranchor);
+      dimRightSpansExcept(keepRight);
+      current.keepRightIds = keepRight.slice();
+      current.anchorRightIds = [];
+      if (span.dataset.kind === 'addition') {
+        if (span.dataset.ranchor) current.anchorRightIds.push(span.dataset.ranchor);
+      }
       // build "keep bright" set for left spans (clicked + its left-anchor if addition)
       const keep = [span.id];
       if (span.dataset.kind === 'addition' && span.dataset.lanchor) {
@@ -474,6 +527,10 @@ CUSTOM_JS = """
         // And the RIGHT in-pane anchor when present (if we clicked a left span and it embeds right anchors too)
         const ra = span.dataset.ranchor;
         if (ra) forceAnchor(q('#' + CSS.escape(ra)));
+        // Self-anchored: also bracket the clicked span itself to “green with brackets”
+        if (span.dataset.selfanchor === '1') {
+          forceAnchor(span);
+        }
       }
 
       const pidx = parseInt(span.getAttribute('data-pair') || '0', 10);
@@ -506,6 +563,20 @@ CUSTOM_JS = """
         }
       }
 
+      // RIGHT dimming: keep selected right span + its right in-pane anchor (if any)
+      const keepR = [span.id];
+      if (span.dataset.kind === 'addition' && span.dataset.ranchor) keepR.push(span.dataset.ranchor);
+      dimRightSpansExcept(keepR);
+      current.keepRightIds = keepR.slice();
+      current.anchorRightIds = [];
+      if (span.dataset.kind === 'addition') {
+        if (span.dataset.ranchor) current.anchorRightIds.push(span.dataset.ranchor);
+        // Self-anchored: bracket the clicked span itself too
+        if (span.dataset.selfanchor === '1') {
+          forceAnchor(span);
+          current.anchorRightIds.push(span.id);
+        }
+      }
       // dim all other LEFT spans, keep only the left anchor (and/or left mate) bright
       const keep = [];
       if (mateId) keep.push(mateId);
@@ -554,7 +625,9 @@ CUSTOM_JS = """
         dimParagraphs(current.idx);   // only dim, no scroll, no float
         // Clear span dimming if user clicks the card background
         clearLeftSpanDimming();
+        clearRightSpanDimming();
         current.keepIds = [];
+        current.keepRightIds = [];
       }
     }
   }, {capture:true});
@@ -569,7 +642,9 @@ CUSTOM_JS = """
       current.idx = null;
       clearParagraphDimming();
       clearLeftSpanDimming();
+      clearRightSpanDimming();
       current.keepIds = [];
+      current.keepRightIds = [];
     }
   }, {capture:true});
 }
