@@ -767,6 +767,10 @@ def _render_left(
                 cls = "hl " + worst_lbl
                 self_col = _hover_color(worst_lbl)
 
+                # Make the focused left span look selected right after re-render
+                if focus and focus[0] == pi and focus[1] == i1:
+                    cls = cls + " selected"
+
                 # Decide if THIS left span is an addition and compute anchors
                 is_add = i1 in left_add_anchor
                 if is_add:

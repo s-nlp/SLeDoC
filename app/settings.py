@@ -288,7 +288,9 @@ CUSTOM_JS = """
   const qa     = (sel) => root().querySelectorAll(sel);
 
   /* Which left paragraph (pair) is focused + which left spans must stay bright */
-  const current = { idx: null, keepIds: [] };
+  const current = {
+    idx: null, keepIds: [], anchorIds: [], anchorRightIds: []
+  };
 
   /* ===== Visual helpers (hover + selection) ===== */
   const confBox = () => q('#conf_box');
@@ -374,8 +376,14 @@ CUSTOM_JS = """
       if (current.idx != null) dimParagraphs(current.idx);
       // Reapply span dimming (clicked set) after repaint
       if (current.keepIds && current.keepIds.length){
-        // ensure content is present before applying
-        setTimeout(() => dimLeftSpansExcept(current.keepIds), 0);
+        setTimeout(() => {
+          dimLeftSpansExcept(current.keepIds);
+          // also re-apply forced anchor brackets on the LEFT (lost on re-render)
+          (current.anchorIds || []).forEach(id => {
+            const el = q('#' + CSS.escape(id));
+            if (el) forceAnchor(el);
+          });
+        }, 0);
       }
     });
     obs.observe(L, { childList: true, subtree: true, characterData: true });
@@ -497,6 +505,28 @@ CUSTOM_JS = """
           if (span.dataset.kind === 'addition') forceAnchor(mate);
         }
       }
+
+      // dim all other LEFT spans, keep only the left anchor (and/or left mate) bright
+      const keep = [];
+      if (mateId) keep.push(mateId);
+      if (span.dataset.kind === 'addition' && span.dataset.lanchor) {
+        keep.push(span.dataset.lanchor);
+      }
+      if (keep.length) {
+        dimLeftSpansExcept(keep);
+        current.keepIds = keep.slice();
+      }
+      // persist left anchor so we can re-apply brackets after re-render
+      current.anchorIds = [];
+      if (span.dataset.kind === 'addition') {
+        const la = span.dataset.lanchor || mateId;
+        if (la) {
+          current.anchorIds = [la];
+          const lEl = q('#' + CSS.escape(la));
+          if (lEl) forceAnchor(lEl);
+        }
+      }
+
       // force-highlight the RIGHT in-pane anchor (anchor claim on the same B paragraph)
       if (span.dataset.kind === 'addition') {
         const ra = span.dataset.ranchor;
