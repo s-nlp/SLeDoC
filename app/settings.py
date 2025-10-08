@@ -87,6 +87,8 @@ BASE_CSS = """
 .hl.neutral { background: rgba(59,130,246,.18); }
 .hl.addition { background: rgba(59,130,246,.18); }
 .hl.contradiction { background: rgba(244,63,94,.18); }
+/* When an addition is shown with delta tokens, we softly wash it green (entailment feel) */
+.hl.as-entailment { background: rgba(34,197,94,.18) !important; }
 
 
 /* Explicit contradiction terms highlight */
@@ -206,6 +208,8 @@ VIEWER_CSS = """
 .hl.neutral        { background: rgba(59,130,246,.18); }
 .hl.addition       { background: rgba(59,130,246,.18); } /* blue */
 .hl.contradiction  { background: rgba(244,63,94,.18); }
+/* When an addition is shown with delta tokens, we softly wash it green (entailment feel) */
+.hl.as-entailment { background: rgba(34,197,94,.18) !important; }
 
 /* contradiction term highlight */
 .contra-term{ background: #fff59a; padding:0 2px; border-radius:3px; }
@@ -313,7 +317,8 @@ CUSTOM_JS = """
     if (!e) return;
     if (e.classList.contains('selected')) return; // keep selection strong
     if (!('_bg' in e.dataset)) e.dataset._bg = e.style.backgroundColor || '';
-    e.style.backgroundColor = col || e.style.backgroundColor;
+    // Only apply color if provided; passing null keeps current background
+    if (col != null) e.style.backgroundColor = col || e.style.backgroundColor;
     e.style.outline = '2px solid #000';
   };
 
@@ -480,8 +485,14 @@ CUSTOM_JS = """
     const s = t && t.closest ? t.closest('span.hl') : null;
     if (s) {
       const tgt = s.dataset.target || '';
-      hi(s.id, s.dataset.hcolor || '');
-      if (tgt) hi(tgt, s.dataset.hcolor || '');
+      // For ADDITION: keep the hovered span blue; color only its mate/anchor.
+      if (s.dataset.kind === 'addition') {
+        hi(s.id, null); // don't repaint self bg
+        if (tgt) hi(tgt, s.dataset.hcolor || '');
+      } else {
+        hi(s.id, s.dataset.hcolor || '');
+        if (tgt) hi(tgt, s.dataset.hcolor || '');
+      }
       const c = parseFloat(s.dataset.conf || '');
       if (confBox()) confBox().textContent = 'Confidence: ' + (isNaN(c) ? '-' : c.toFixed(3));
     }
@@ -640,9 +651,9 @@ CUSTOM_JS = """
         dimLeftSpansExcept(keep);
         current.dimLeftAll = false;
       } else {
-        // No known left mate yet → do not dim the left pane; wait for Python to resolve
-        clearLeftSpanDimming();
-        current.dimLeftAll = false;
+        // No known left mate yet → DIM ALL left spans until Python resolves a mate.
+        qa('#left_pane .hl').forEach(el => el.classList.add('dimmed'));
+        current.dimLeftAll = true;
       }
       current.keepIds = keep.slice();     // always refresh keepIds
       // persist left anchor so we can re-apply brackets after re-render

@@ -938,13 +938,22 @@ def _render_left(
                     cls = "hl addition"
                     self_col = _hover_color("addition")
                 anc_li = left_add_anchor.get(i1)
-                # mark self-anchored (addition anchored to itself)
+                # mark self-anchored (LLM anchored to itself)
                 is_self_anchor = is_add and (anc_li == i1)
+                # display-anchor: if self-anchored, prefer neighbor (next else previous)
+                disp_anc_li = anc_li
+                if is_self_anchor and len(out1) > 1:
+                    disp_anc_li = i1 + 1 if (i1 + 1) < len(out1) else (i1 - 1 if i1 > 0 else i1)
 
                 # RIGHT anchor for brackets (contra>ent) derived from the left anchor itself
                 anc_rj, anc_lbl = None, ""
-                if anc_li is not None and anc_li in left_anchor_to_right_anchor:
-                    anc_rj, anc_lbl = left_anchor_to_right_anchor[anc_li]
+                use_lbl_for = disp_anc_li if disp_anc_li is not None else anc_li
+                if (use_lbl_for is not None) and (use_lbl_for in left_anchor_to_right_anchor):
+                    anc_rj, anc_lbl = left_anchor_to_right_anchor[use_lbl_for]
+                elif use_lbl_for is not None:
+                    # compute on the fly
+                    anc_rj, anc_lbl = _best_right_for_left_anchor(b, use_lbl_for)
+ 
 
                 # Cross-doc mate target:
                 # - for additions → point to RIGHT *anchor* if available
@@ -968,10 +977,11 @@ def _render_left(
                 extras = []
                 if is_add:
                     extras.append('data-kind="addition"')
-                    if anc_li is not None:
-                        extras.append(f'data-lanchor="L-{pi}-{anc_li}"')
-                        if is_self_anchor:
-                            extras.append('data-selfanchor="1"')
+                    # lanchor brackets show NEIGHBOR if self-anchored
+                    if disp_anc_li is not None:
+                        extras.append(f'data-lanchor="L-{pi}-{disp_anc_li}"')
+                    if is_self_anchor:
+                        extras.append('data-selfanchor="1"')
                     # Point to the *actual* right addition partner (blue → brackets on click)
                     ranchor = None
                     j_add = left_add_to_right_add.get(i1)
@@ -983,6 +993,16 @@ def _render_left(
                         extras.append(f'data-ranchor="R-{pi}-{ranchor}"')
 
                 extra_attr = (" " + " ".join(extras)) if extras else ""
+                # If THIS is the focused left ADDITION and we do have delta/contra terms,
+                # paint the body as "entailment-feel" green so yellow tokens pop clearly.
+                if (
+                    is_add
+                    and focus
+                    and focus[0] == pi
+                    and focus[1] == i1
+                    and contra_terms
+                ):
+                    cls = cls + " as-entailment"
 
                 spans.append(
                     f'<span id="L-{pi}-{i1}" class="{cls}" data-pair="{pi}" data-left="{i1}" data-selfcolor="{self_col}"{target_attr}{hcolor_attr}{extra_attr}>{txt}</span>'
@@ -1365,7 +1385,7 @@ def _render_right_col(
     """
 
 
-def _render_reason(blocks, focus):
+def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
     k, i_left = focus
     if not blocks or k < 0 or k >= len(blocks) or i_left is None:
         return '<div class="reason-wrap"></div>'
@@ -1375,24 +1395,40 @@ def _render_reason(blocks, focus):
         return '<div class="reason-wrap"></div>'
 
     items: List[str] = []
-    # 1) Prefer any record that maps to this left index (by indices, not strings).
-    #    If mapping-by-text fails (e.g. additions), also accept records whose explicit anchor == i_left.
-    for r in b.get("nli_results") or []:
-        li, _rj = _map_record_indices(b, r)
-        lab = str(r.get("label") or "").lower()
-        anc = r.get("anchor") if isinstance(r.get("anchor"), int) else None
-        if li != i_left and anc != i_left:
-            continue
-        reason = (
-            r.get("explanation")
-            or r.get("reason")
-            or r.get("reasoning")
-            or REASON_BY_LABEL.get(lab, "")
-        )
-        if reason:
-            items.append(f'<div class="reason-card">{html.escape(str(reason))}</div>')
+    # 1) Prefer the single record that maps EXACTLY to (i_left, target_right_idx) when provided.
+    if target_right_idx is not None:
+        for r in b.get("nli_results") or []:
+            li, rj = _map_record_indices(b, r)
+            if li == i_left and rj == target_right_idx:
+                lab = str(r.get("label") or "").lower()
+                reason = (
+                    r.get("explanation")
+                    or r.get("reason")
+                    or r.get("reasoning")
+                    or REASON_BY_LABEL.get(lab, "")
+                )
+                if reason:
+                    items.append(f'<div class="reason-card">{html.escape(str(reason))}</div>')
+                    break
+    # 2) Else: a record that maps by the left index (or whose explicit anchor == i_left).
+    if not items:
+        for r in b.get("nli_results") or []:
+            li, _rj = _map_record_indices(b, r)
+            lab = str(r.get("label") or "").lower()
+            anc = r.get("anchor") if isinstance(r.get("anchor"), int) else None
+            if li != i_left and anc != i_left:
+                continue
+            reason = (
+                r.get("explanation")
+                or r.get("reason")
+                or r.get("reasoning")
+                or REASON_BY_LABEL.get(lab, "")
+            )
+            if reason:
+                items.append(f'<div class="reason-card">{html.escape(str(reason))}</div>')
+                break
 
-    # 2) If nothing matched try an explicit (addition|neutral) whose anchor == i_left
+    # 3) If still nothing matched try an explicit (addition|neutral) whose anchor == i_left
     if not items:
         for r in b.get("nli_results") or []:
             lab = str(r.get("label") or "").lower()
@@ -1408,7 +1444,7 @@ def _render_reason(blocks, focus):
                         f'<div class="reason-card">{html.escape(str(reason))}</div>'
                     )
                     break
-    # 3) Absolute last resort: derive worst label for this left span and show default copy
+    # 4) Absolute last resort: worst label for this left span and default copy
     if not items:
         links, _ = _link_map_for_pair(b)
         sev = NLI_SEVERITY
@@ -1645,6 +1681,22 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                                 contra_model_id or "gpt-4o",
                             )
                             rj = maybe_rj
+                        elif (li_anchor is not None) and 0 <= l_ < len(out1) and 0 <= li_anchor < len(out1):
+                            # 3) LAST RESORT: compute delta vs LEFT ANCHOR (right mate unknown)
+                            anchor_text = str(
+                                out1[li_anchor].get("claim") or out1[li_anchor].get("input") or ""
+                            )
+                            addition_text = str(
+                                out1[l_].get("claim") or out1[l_].get("input") or ""
+                            )
+                            if anchor_text and addition_text:
+                                terms = _get_delta_terms(
+                                    anchor_text,
+                                    addition_text,
+                                    bool(use_llm_contra),
+                                    contra_model_id or "gpt-4o",
+                                )
+                                rj = None
             except Exception:
                 # fail-safe: ignore delta on error; UI will still bracket anchors
                 pass
@@ -1655,7 +1707,7 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
             return (
                 _render_left(ps or [], (k, l_), terms),
                 _render_right_col(ps or [], (k, l_), terms, rj),
-                _render_reason(ps or [], (k, l_)),
+                _render_reason(ps or [], (k, l_), rj),
                 gr.update(),  # DO NOT update Radio from span clicks -> prevents second overwrite render
             )
         if v and v.startswith("R:"):
@@ -1732,7 +1784,7 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
             return (
                 _render_left(ps or [], (k, best_li), terms),
                 _render_right_col(ps or [], (k, best_li), terms, target_right_idx=rj),
-                _render_reason(ps or [], (k, best_li)),
+                _render_reason(ps or [], (k, best_li), rj),
                 gr.update(),  # DO NOT update Radio from span clicks -> prevents second overwrite render
             )
     except Exception:
@@ -1740,7 +1792,7 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
     return (
         _render_left(ps or []),
         _render_right_col(ps or [], (k, l_)),
-        _render_reason(ps or [], (k, l_)),
+        _render_reason(ps or [], (k, l_), None),
         gr.update(),  # DO NOT update Radio from span clicks -> prevents second overwrite render
     )
 
@@ -1889,7 +1941,7 @@ with gr.Blocks(
                     pass
 
                 # reasoning is empty until a specific span is clicked
-                reason = _render_reason(pairs or [], (0, None))
+                reason = _render_reason(pairs or [], (0, None), None)
 
                 # Prepare Radio choices "1..N"
                 choices = [str(i + 1) for i in range(len(pairs))]
