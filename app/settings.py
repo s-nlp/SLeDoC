@@ -297,6 +297,7 @@ CUSTOM_JS = """
   const current = {
     idx: null,
     keepIds: [],          // LEFT keep-bright span IDs
+    dimLeftAll: false,    // remember “dim all left spans” across repaints
     anchorIds: [],        // LEFT anchors to re-bracket after repaint
     keepRightIds: [],     // RIGHT keep-bright span IDs
     anchorRightIds: [],   // RIGHT anchors to re-bracket after repaint
@@ -407,6 +408,13 @@ CUSTOM_JS = """
       if (current.keepIds && current.keepIds.length){
         setTimeout(() => {
           dimLeftSpansExcept(current.keepIds);
+          // re-apply “dim all left” even if keepIds is empty (persisted flag)
+        }, 0);
+      } else if (current.dimLeftAll) {
+        setTimeout(() => {
+          qa('#left_pane .hl').forEach(el => {
+            el.classList.add('dimmed');
+          });
           // also re-apply forced anchor brackets on the LEFT (lost on re-render)
           (current.anchorIds || []).forEach(id => {
             const el = q('#' + CSS.escape(id));
@@ -569,12 +577,6 @@ CUSTOM_JS = """
       current.idx = pidx;
       dimParagraphs(current.idx);
 
-      // If this is an ADDITION, clear Explanation box immediately (Python will re-fill if needed)
-      if (span.dataset.kind === 'addition') {
-        const rb = q('#reason_box');
-        if (rb) rb.innerHTML = '<div class="reason-wrap"><div class="reason-title"><b>Explanation</b></div></div>';
-      }
-
       if (sendBridge(`S:${pidx}:${lidx}`)) {
         // no-op; already dimmed above
       }
@@ -612,6 +614,8 @@ CUSTOM_JS = """
       if (span.dataset.kind === 'addition' && span.dataset.ranchor) keepR.push(span.dataset.ranchor);
       dimRightSpansExcept(keepR);
       current.keepRightIds = keepR.slice();
+      // default: we are NOT in “dim all left” mode unless proven otherwise below
+      current.dimLeftAll = false;
       current.anchorRightIds = [];
       if (span.dataset.kind === 'addition') {
         if (span.dataset.ranchor) current.anchorRightIds.push(span.dataset.ranchor);
@@ -634,10 +638,11 @@ CUSTOM_JS = """
       }
       if (keep.length) {
         dimLeftSpansExcept(keep);
+        current.dimLeftAll = false;
       } else {
-        // If we still don't know the mate, dim EVERYTHING on the left for this moment
-        // (Python will re-render with the correct left focus and our observers will restore selection)
-        qa('#left_pane .hl').forEach(el => el.classList.add('dimmed'));
+        // No known left mate yet → do not dim the left pane; wait for Python to resolve
+        clearLeftSpanDimming();
+        current.dimLeftAll = false;
       }
       current.keepIds = keep.slice();     // always refresh keepIds
       // persist left anchor so we can re-apply brackets after re-render
@@ -666,12 +671,6 @@ CUSTOM_JS = """
       current.idx = pidx;
       dimParagraphs(current.idx);
 
-      // If this is an ADDITION, clear Explanation box immediately (Python will re-fill appropriate reason)
-      if (span.dataset.kind === 'addition') {
-        const rb = q('#reason_box');
-        if (rb) rb.innerHTML = '<div class="reason-wrap"><div class="reason-title"><b>Explanation</b></div></div>';
-      }
-
       if (sendBridge(`R:${pidx}:${ridx}`)) {
         // already set above
       }
@@ -691,6 +690,7 @@ CUSTOM_JS = """
         clearRightSpanDimming();
         current.keepIds = [];
         current.keepRightIds = [];
+        current.dimLeftAll = false;   // reset
         current.anchorIds = [];
         current.anchorRightIds = [];
         current.selectedLeftId = null;
@@ -721,6 +721,7 @@ CUSTOM_JS = """
     clearRightSpanDimming();
     current.keepIds = [];
     current.keepRightIds = [];
+    current.dimLeftAll = false;   // reset on outside click
     current.anchorIds = [];
     current.anchorRightIds = [];
   }, {capture:true});

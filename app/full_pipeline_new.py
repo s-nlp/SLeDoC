@@ -1516,43 +1516,54 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                 # Only contradictions reach here
                 terms = info["terms"]
 
-            # Self-anchored ADDITION special case (delta terms on FIRST CLICK)
-            # If LEFT span is an addition anchored to itself, compute DELTA against the *actual right addition mate*.
+            # ADDITION (blue) on LEFT-CLICK → compute DELTA terms as well (not only self-anchored)
+            # Strategy:
+            #   1) If clicked left span is an addition, prefer its true right addition mate.
+            #   2) If no direct mate, use the anchor's contra/ent mate as a fallback for bracket color + delta.
             try:
-                block = (ps or [])[k]
-                (
-                    left_add_anchor,
-                    _r2l,
-                    _r2r,
-                    _txt2l,
-                    _left_anchor_to_right_anchor,
-                    left_add_to_right_add,
-                ) = _build_addition_anchors(block)
-                if l_ in (left_add_anchor or {}) and left_add_anchor[l_] == l_:
-                    maybe_rj = left_add_to_right_add.get(l_)
-                    out1 = block.get("output_1") or []
-                    out2 = block.get("output_2") or []
-                    if (
-                        maybe_rj is not None
-                        and 0 <= l_ < len(out1)
-                        and 0 <= maybe_rj < len(out2)
-                    ):
-                        left_text = str(
-                            out1[l_].get("claim") or out1[l_].get("input") or ""
-                        )
-                        right_text = str(
-                            out2[maybe_rj].get("claim")
-                            or out2[maybe_rj].get("input")
-                            or ""
-                        )
-                        terms = _get_delta_terms(
-                            left_text,
-                            right_text,
-                            bool(use_llm_contra),
-                            contra_model_id or "gpt-4o",
-                        )
-                        rj = maybe_rj
+                if terms is None:  # don't overwrite contradiction terms if already set
+                    block = (ps or [])[k]
+                    (
+                        left_add_anchor,
+                        _r2l,
+                        _r2r,
+                        _txt2l,
+                        left_anchor_to_right_anchor,
+                        left_add_to_right_add,
+                    ) = _build_addition_anchors(block)
+                    if l_ in (left_add_anchor or {}):
+                        li_anchor = left_add_anchor.get(l_)
+                        out1 = block.get("output_1") or []
+                        out2 = block.get("output_2") or []
+                        # 1) true right addition partner if available
+                        maybe_rj = left_add_to_right_add.get(l_)
+                        # 2) else: anchor's best right mate (contra > ent) for stable brackets & delta
+                        if (maybe_rj is None) and (li_anchor is not None):
+                            maybe_rj, _lbl = (left_anchor_to_right_anchor or {}).get(
+                                li_anchor, (None, "")
+                            )
+                        if (
+                            maybe_rj is not None
+                            and 0 <= l_ < len(out1)
+                            and 0 <= maybe_rj < len(out2)
+                        ):
+                            left_text = str(
+                                out1[l_].get("claim") or out1[l_].get("input") or ""
+                            )
+                            right_text = str(
+                                out2[maybe_rj].get("claim")
+                                or out2[maybe_rj].get("input")
+                                or ""
+                            )
+                            terms = _get_delta_terms(
+                                left_text,
+                                right_text,
+                                bool(use_llm_contra),
+                                contra_model_id or "gpt-4o",
+                            )
+                            rj = maybe_rj
             except Exception:
+                # fail-safe: ignore delta on error; UI will still bracket anchors
                 pass
 
             # Note: for additions/neutral/entailment → terms=None.
