@@ -7,8 +7,8 @@ CONTRADICTION means the spans refer to the same segment but convey a somewhat di
 ADDITION means the segment introduces entirely new information. For ADDITION you must also extract an anchor — the phrase to which the added segment relates.
 Important distinctions:
 - CONTRADICTION: both spans fill the same semantic slot but with different content (e.g., the same place/time/agent/method differs). This is NOT an addition.
-- ADDITION: new information that attaches to an existing phrase. When you choose ADDITION, also copy verbatim the ANCHOR — the exact phrase in the other paragraph that the addition elaborates on. The anchor must be copied verbatim from the paragraph it belongs to.
-- The "anchor" must be an exact substring of one of the paragraphs (no paraphrase). Prefer anchoring to Paragraph 1 if the addition is present only in Paragraph 2, and to Paragraph 2 if the addition is present only in Paragraph 1.
+- ADDITION: new information that attaches to an existing phrase. When you choose ADDITION, also copy verbatim the ANCHOR — the exact phrase in the other span that the addition elaborates on. The anchor must be copied verbatim from the paragraph it belongs to.
+- The "anchor" must be an exact substring of one of the paragraphs (no paraphrase). Prefer anchoring to Paragraph 1 if the addition is present only in Paragraph 2, and to Paragraph 2 if the addition is present only in Paragraph 1. "anchor" can't be exactly same span where "addition" is, addition can't anchors on itslef.
 
 
 Provide a brief reasoning with logic before you assign a label for the matched span.
