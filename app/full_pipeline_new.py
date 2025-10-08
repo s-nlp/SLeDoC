@@ -70,6 +70,8 @@ RUS_STOPWORDS_SHORT = {
 }
 MIN_TERM_ALNUM_LEN = 2  # require ≥2 alnum chars to highlight (to avoid 'в', 'и', etc)
 
+MODELS_LIST = _list_models()
+
 
 def _alnum_len(s: str) -> int:
     # count letters/digits/underscore in Unicode
@@ -152,7 +154,9 @@ def _wrap_terms_html(
         # merge if the gap is:
         #   - only whitespace, OR
         #   - whitespace + exactly one symbol
-        if gap and (gap_stripped == "" or re.fullmatch(r"[,.:;!?–—-]", gap_stripped)):
+        if (not gap) or (
+            gap_stripped == "" or re.fullmatch(r"[,.:;!?–—-]", gap_stripped)
+        ):
             e0 = e  # include the gap (spaces + the one symbol) inside the marked region
         else:
             merged.append((s0, e0))
@@ -308,6 +312,8 @@ def _build_addition_anchors(
       2) right_addition_to_left_anchor[right_idx] -> left_anchor_idx
       3) right_addition_to_right_anchor[right_idx] -> right_anchor_idx (if anchor text exists on B)
       4) right_text_to_left_anchor[normed_right_text] -> left_anchor_idx (when right_idx could not be resolved)
+      5) left_anchor_to_right_anchor[left_anchor_idx] -> (right_idx or None, label_for_brackets)
+      6) left_add_to_right_add[left_idx_addition] -> right_idx_addition (if both sides are mapped)
 
     We use:
       - r['anchor'] when present (index into left/output_1),
@@ -842,7 +848,6 @@ def _render_left(
     Big left pane: for each pair, show Document A claims as spans, colored by worst NLI link.
     If no claims available for a block, fall back to raw paragraph text.
     """
-    html_parts = ['<div class="viewer-wrap"><div class="left-pane">']
     html_parts = [
         '<div class="viewer-wrap"><div class="left-pane">',
         '<div class="left-title">Source text of Document A</div>',
@@ -898,16 +903,14 @@ def _render_left(
                     ):
                         best_r = rj
                         best_lbl = lbl or ""
+                if best_lbl == "equivalent":
+                    best_lbl = "entailment"
 
                 # term highlighting if this left is focused (position-aware)
                 if focus and focus[0] == pi and focus[1] == i1 and contra_terms:
                     # find counterpart right text for a position mask
                     mate_txt = None
-                    if (
-                        "best_r" in locals()
-                        and best_r is not None
-                        and 0 <= best_r < len(out2)
-                    ):
+                    if best_r is not None and 0 <= best_r < len(out2):
                         mate_txt = _get_claim_text(out2[best_r])
                     mask = (
                         _compute_diff_mask(raw, mate_txt)
@@ -939,16 +942,18 @@ def _render_left(
                 is_self_anchor = is_add and (anc_li == i1)
 
                 # RIGHT anchor for brackets (contra>ent) derived from the left anchor itself
-                anc_rj = None
+                anc_rj, anc_lbl = None, ""
                 if anc_li is not None and anc_li in left_anchor_to_right_anchor:
-                    anc_rj, _anc_lbl = left_anchor_to_right_anchor[anc_li]
+                    anc_rj, anc_lbl = left_anchor_to_right_anchor[anc_li]
 
                 # Cross-doc mate target:
                 # - for additions → point to RIGHT *anchor* if available
                 # - otherwise → best_r as before
                 if is_add and anc_rj is not None:
                     target_attr = f' data-target="R-{pi}-{anc_rj}"'
-                    hcolor_attr = f' data-hcolor="{_hover_color("entailment")}"'
+                    hcolor_attr = (
+                        f' data-hcolor="{_hover_color(anc_lbl or "entailment")}"'
+                    )
                 else:
                     target_attr = (
                         f' data-target="R-{pi}-{best_r}"' if best_r is not None else ""
@@ -968,11 +973,15 @@ def _render_left(
                         if is_self_anchor:
                             extras.append('data-selfanchor="1"')
                     # Point to the *actual* right addition partner (blue → brackets on click)
+                    ranchor = None
                     j_add = left_add_to_right_add.get(i1)
                     if j_add is not None:
-                        extras.append(f'data-ranchor="R-{pi}-{j_add}"')
-                    if anc_rj is not None:
-                        extras.append(f'data-ranchor="R-{pi}-{anc_rj}"')
+                        ranchor = j_add
+                    elif anc_rj is not None:
+                        ranchor = anc_rj
+                    if ranchor is not None:
+                        extras.append(f'data-ranchor="R-{pi}-{ranchor}"')
+
                 extra_attr = (" " + " ".join(extras)) if extras else ""
 
                 spans.append(
@@ -1065,6 +1074,8 @@ def _embed_right_claims_in_paragraph(
         if j_hit is not None:
             # label + best mate on the left (to keep cross-hover/selection)
             lbl = (label_for_right.get(j_hit, "") or "").lower()
+            if lbl == "equivalent":
+                lbl = "entailment"
             # include 'addition' so blue styling applies on the right too
             cls = "hl " + (
                 lbl
@@ -1235,6 +1246,9 @@ def _render_right_col(
     if i_left is None:
         for li, pairs in links.items():
             for rj, lbl in pairs:
+                lbl = (str(lbl) or "").lower()
+                if lbl == "equivalent":
+                    lbl = "entailment"
                 label_for_right[rj] = take_worst(
                     label_for_right.get(rj, ""), str(lbl).lower()
                 )
@@ -1436,16 +1450,18 @@ def _align_stage0(
         paragraphs_b = separate_points(
             merge_incomplete_sentences(get_paragraphs_from_docx(p2))
         )
-        len_a = sum(len(x) for x in paragraphs_a)
-        len_b = sum(len(x) for x in paragraphs_b)
-        if len_a > 5000 or len_b > 5000:
-            gr.Warning(
-                f"Document too long: A={len_a} chars, B={len_b} chars. "
-                f"Limit is 5000. Processing stopped."
-            )
-            raise RuntimeError("Document length exceeds 5000 characters.")
-    except Exception:
-        pass
+    except Exception as e:
+        # Surface a real error instead of continuing
+        msg = f"Failed to read documents: {e}"
+        gr.Error(msg)
+        raise
+
+    len_a = sum(map(len, paragraphs_a))
+    len_b = sum(map(len, paragraphs_b))
+    if len_a > 5000 or len_b > 5000:
+        msg = f"Document too long: A={len_a} chars, B={len_b} chars. Limit is 5000. Processing stopped."
+        gr.Warning(msg)
+        raise gr.Error(msg)
 
     enc = Encoder.load(model_id=model_id, device=device)
     emb_a = enc.encode(paragraphs_a, batch_size=int(batch_size))
@@ -1481,6 +1497,7 @@ def _orchestrate(
     window_size: int,
     threshold: float,
     claim_prompt: str,
+    llm_model_id: Optional[str],
 ):
     """
     Stage 0 -> (1+2 via LLM) or (1 then 2) -> render viewer.
@@ -1498,14 +1515,19 @@ def _orchestrate(
     )
 
     if use_llm_12:
-        pairs_path = run_llm_nli_file(align_path, system_prompt=claim_prompt)
+        pairs_path = run_llm_nli_file(
+            align_path,
+            system_prompt=claim_prompt,
+            model_name=llm_model_id or "gpt-4o",
+        )
         pairs = json.loads(Path(pairs_path).read_text(encoding="utf-8"))
     else:
         # Stage 1
         claims_path = run_claim_extraction(align_path, system_prompt=claim_prompt)
         # Stage 2 (nli_predict.run_nli_file accepts (model_name, file_obj-or-path))
+
         nli_out_path = run_nli_file(
-            nli_model_name or (_list_models()[0] if _list_models() else None),
+            nli_model_name or (MODELS_LIST[0] if MODELS_LIST else None),
             str(claims_path),
         )
         pairs_path = nli_out_path
@@ -1750,8 +1772,8 @@ with gr.Blocks(
                         with gr.Row():
                             nli_model = gr.Dropdown(
                                 label="NLI model (when not using LLM 1+2)",
-                                choices=_list_models(),
-                                value=_list_models()[0] if _list_models() else None,
+                                choices=MODELS_LIST,
+                                value=MODELS_LIST[0] if MODELS_LIST else None,
                             )
                             device = gr.Dropdown(
                                 choices=["cpu", "cuda"], value="cpu", label="Device"
@@ -1841,6 +1863,7 @@ with gr.Blocks(
                 sys_prompt,
                 use_llm_contra,
                 contra_model,
+                llm_model_id,
             ):
                 (align_path, pairs_path, preview, left, right, pairs) = _orchestrate(
                     doc1_f,
@@ -1852,6 +1875,7 @@ with gr.Blocks(
                     int(win),
                     float(thr),
                     sys_prompt,
+                    llm_model_id or "gpt-4o",
                 )
                 # Precompute contradiction terms once for all blocks so clicks are instant and stable
                 try:
@@ -1902,6 +1926,7 @@ with gr.Blocks(
                     claim_prompt,
                     use_llm_contra,
                     contra_model,
+                    llm_model,
                 ],
                 outputs=[
                     left_html,
