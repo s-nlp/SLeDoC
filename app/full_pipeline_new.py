@@ -68,7 +68,7 @@ RUS_STOPWORDS_SHORT = {
     "за",
     "у",
 }
-MIN_TERM_ALNUM_LEN = 2  # require ≥2 alnum chars to highlight
+MIN_TERM_ALNUM_LEN = 2  # require ≥2 alnum chars to highlight (to avoid 'в', 'и', etc)
 
 
 def _alnum_len(s: str) -> int:
@@ -76,7 +76,26 @@ def _alnum_len(s: str) -> int:
     return len(re.sub(r"[^\w]", "", s, flags=re.UNICODE))
 
 
-def _wrap_terms_html(text: str, terms: List[str]) -> str:
+def _compute_diff_mask(a: str, b: str) -> List[bool]:
+    """
+    Return a boolean mask for `a` (len == len(a)) where True marks positions that
+    are *different* from `b` (by difflib at char level, case-insensitive).
+    Equal blocks are False; replace/delete blocks are True; inserts in `b` do not
+    affect the mask for `a`.
+    """
+    a0, b0 = (a or ""), (b or "")
+    sm = difflib.SequenceMatcher(a=a0.lower(), b=b0.lower())
+    mask = [True] * len(a0)
+    for tag, i1, i2, _j1, _j2 in sm.get_opcodes():
+        if tag == "equal":
+            for i in range(i1, i2):
+                mask[i] = False
+    return mask
+
+
+def _wrap_terms_html(
+    text: str, terms: List[str], allowed_mask: Optional[List[bool]] = None
+) -> str:
     """
     Wrap selected terms/phrases in <mark class="contra-term">…</mark>, **merging**
     adjacent matches if separated only by whitespace. This way tokens like
@@ -114,8 +133,15 @@ def _wrap_terms_html(text: str, terms: List[str]) -> str:
     except Exception:
         return _escape(text)
 
-    # collect raw matches (start, end), then merge neighbors if gap is only whitespace
-    matches = [m.span() for m in rx.finditer(text)]
+    # collect raw matches (start, end), optionally filter by allowed_mask
+    matches = []
+    for m in rx.finditer(text):
+        s, e = m.span()
+        if allowed_mask and len(allowed_mask) == len(text):
+            # keep only if ANY char in [s:e) lies in a "different" region
+            if not any(allowed_mask[i] for i in range(s, e)):
+                continue
+        matches.append((s, e))
     if not matches:
         return _escape(text)
     merged: List[Tuple[int, int]] = []
@@ -824,6 +850,7 @@ def _render_left(
 
     for pi, b in enumerate(blocks):
         out1 = b.get("output_1") or []
+        out2 = b.get("output_2") or []
         links, left_color = _link_map_for_pair(b)
         # Build anchor maps (so additions snap to anchors)
         (
@@ -872,9 +899,24 @@ def _render_left(
                         best_r = rj
                         best_lbl = lbl or ""
 
-                # term highlighting if this left is focused
+                # term highlighting if this left is focused (position-aware)
                 if focus and focus[0] == pi and focus[1] == i1 and contra_terms:
-                    txt = _wrap_terms_html(raw, (contra_terms.get("from_span_1") or []))
+                    # find counterpart right text for a position mask
+                    mate_txt = None
+                    if (
+                        "best_r" in locals()
+                        and best_r is not None
+                        and 0 <= best_r < len(out2)
+                    ):
+                        mate_txt = _get_claim_text(out2[best_r])
+                    mask = (
+                        _compute_diff_mask(raw, mate_txt)
+                        if mate_txt is not None
+                        else None
+                    )
+                    txt = _wrap_terms_html(
+                        raw, (contra_terms.get("from_span_1") or []), mask
+                    )
                 else:
                     txt = _escape(raw)
 
@@ -963,6 +1005,7 @@ def _hover_color(lbl: str) -> str:
 def _embed_right_claims_in_paragraph(
     par_text: str,
     out2: List[Dict[str, Any]],
+    out1: List[Dict[str, Any]],
     k: int,
     label_for_right: Dict[int, str],
     best_for_right: Dict[int, Tuple[int, str]],
@@ -1113,8 +1156,22 @@ def _embed_right_claims_in_paragraph(
                 and (j_hit == int(target_right_idx))
                 and contra_terms
             ):
+                # find the most sensible left counterpart for this right span
+                li_for_terms = None
+                if best_for_right.get(j_hit):
+                    li_for_terms = best_for_right[j_hit][0]
+                elif ent_right_to_left and j_hit in ent_right_to_left:
+                    li_for_terms = ent_right_to_left[j_hit]
+                elif anchor_idx_for_right and j_hit in anchor_idx_for_right:
+                    li_for_terms = anchor_idx_for_right[j_hit]
+                left_seg = None
+                if li_for_terms is not None and 0 <= li_for_terms < len(out1):
+                    left_seg = _get_claim_text(out1[li_for_terms])
+                mask = (
+                    _compute_diff_mask(seg, left_seg) if left_seg is not None else None
+                )
                 inner = _wrap_terms_html(
-                    seg, (contra_terms or {}).get("from_span_2") or []
+                    seg, (contra_terms or {}).get("from_span_2") or [], mask
                 )
             else:
                 inner = _escape(seg)
@@ -1267,6 +1324,7 @@ def _render_right_col(
     claims_body = _embed_right_claims_in_paragraph(
         paragraph_b,
         out2,
+        out1,
         k,
         label_for_right,
         best_for_right,
@@ -1515,6 +1573,9 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
             if info:
                 # Only contradictions reach here
                 terms = info["terms"]
+                rj = info.get(
+                    "right_idx"
+                )  # << ensure the RIGHT gets selected & highlighted
 
             # ADDITION (blue) on LEFT-CLICK → compute DELTA terms as well (not only self-anchored)
             # Strategy:
