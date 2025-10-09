@@ -357,8 +357,12 @@ def _build_addition_anchors(
         prem = str(r.get("premise_raw") or r.get("premise") or "")
         hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
         # Robust mapping: either side may be empty / swapped for additions
-        li = idx1.get(prem) if prem in idx1 else (idx1.get(hyp) if hyp in idx1 else None)
-        rj = idx2.get(hyp) if hyp in idx2 else (idx2.get(prem) if prem in idx2 else None)
+        li = (
+            idx1.get(prem) if prem in idx1 else (idx1.get(hyp) if hyp in idx1 else None)
+        )
+        rj = (
+            idx2.get(hyp) if hyp in idx2 else (idx2.get(prem) if prem in idx2 else None)
+        )
         # If we still have no rj, try to map by normalized right text
         if rj is None:
             # prefer the text that belongs to the right side (hypothesis in our pipeline)
@@ -410,8 +414,20 @@ def _build_addition_anchors(
         anc_lbl: str = ""
         if anc_li is not None:
             anc_rj, anc_lbl = _best_right_for_left_anchor(block, anc_li)
+            # Fallback: if the left anchor has no contra/ent mate, use THIS pair's right as the in-pane anchor
+            if (anc_rj is None) and (rj is not None):
+                anc_rj = rj
+                # if there was no strong label, default bracket/background feel to entailment-green
+                if not anc_lbl:
+                    anc_lbl = "entailment"
+            # Ensure we always record *some* right anchor for the left anchor (even if it's the addition mate itself)
             if anc_li not in left_anchor_to_right_anchor:
                 left_anchor_to_right_anchor[anc_li] = (anc_rj, anc_lbl)
+            else:
+                # upgrade empty mapping (None, "") if we now have a concrete right anchor
+                _old_rj, _old_lbl = left_anchor_to_right_anchor[anc_li]
+                if _old_rj is None and anc_rj is not None:
+                    left_anchor_to_right_anchor[anc_li] = (anc_rj, anc_lbl)
         # if not found yet but we left a right-side anchor above, keep it
         if anc_rj is None and rj is not None and rj in right_add_to_right_anchor:
             anc_rj = right_add_to_right_anchor[rj]
@@ -429,7 +445,8 @@ def _build_addition_anchors(
             cand = hyp if hyp not in (None, "") else prem
             if cand:
                 right_text_to_left_anchor[_norm(cand)] = int(anc_li)
-        if anc_rj is not None and rj is not None and anc_rj != rj:
+        # always keep a right→right anchor, even if it points to self (harmless; JS ignores equality)
+        if anc_rj is not None and rj is not None:
             right_add_to_right_anchor[rj] = int(anc_rj)
 
     return (
@@ -1024,31 +1041,45 @@ def _render_left(
 
                 # NOW do term highlighting (we finally know is_add & j_add_for_left)
                 if focus and focus[0] == pi and focus[1] == i1 and contra_terms:
-                    # find counterpart right text for a position mask
+                    orient = (contra_terms or {}).get("_orientation", "")
+                    # Choose the SAME counterpart we used to compute the delta,
+                    # so the diff mask doesn't filter everything out.
                     mate_txt = None
-                    if (
-                        is_add
-                        and j_add_for_left is not None
-                        and 0 <= j_add_for_left < len(out2)
-                    ):
-                        mate_txt = _get_claim_text(out2[j_add_for_left])
-                    if (
-                        mate_txt is None
-                        and best_r is not None
-                        and 0 <= best_r < len(out2)
-                    ):
-                        mate_txt = _get_claim_text(out2[best_r])
+                    if is_add:
+                        if (
+                            orient == "anchor-vs-left"
+                            and anc_li is not None
+                            and 0 <= anc_li < len(out1)
+                        ):
+                            # delta was computed: anchor (span_1) vs LEFT addition (span_2)
+                            # -> build mask against the LEFT anchor text
+                            mate_txt = _get_claim_text(out1[anc_li])
+                        elif j_add_for_left is not None and 0 <= j_add_for_left < len(
+                            out2
+                        ):
+                            # delta was computed: LEFT addition (span_1) vs RIGHT mate (span_2)
+                            mate_txt = _get_claim_text(out2[j_add_for_left])
+                        elif best_r is not None and 0 <= best_r < len(out2):
+                            # fallback: best right if nothing else
+                            mate_txt = _get_claim_text(out2[best_r])
+                    else:
+                        if best_r is not None and 0 <= best_r < len(out2):
+                            mate_txt = _get_claim_text(out2[best_r])
+
                     mask = (
                         _compute_diff_mask(raw, mate_txt)
                         if mate_txt is not None
                         else None
                     )
-                    # Orientation-aware yellow terms
-                    orient = (contra_terms or {}).get("_orientation", "")
+
+                    # Which terms to paint on the LEFT:
+                    # - anchor-vs-left -> new stuff is in span_2 (the LEFT addition)
+                    # - left-vs-right  -> new stuff for LEFT is span_1
                     if is_add and orient == "anchor-vs-left":
-                        yterms = contra_terms.get("from_span_2") or []
+                        yterms = (contra_terms or {}).get("from_span_2") or []
                     else:
-                        yterms = contra_terms.get("from_span_1") or []
+                        yterms = (contra_terms or {}).get("from_span_1") or []
+
                     txt = _wrap_terms_html(raw, yterms, mask)
                 else:
                     txt = _escape(raw)
@@ -1383,7 +1414,7 @@ def _render_right_col(
         if aj is not None and 0 <= aj < len(out2):
             # Anchor color must reflect the anchor’s own best link (contra > ent), not be “downgraded” to blue by synthesized additions.
             # Therefore we **override** whatever was there.
-            label_for_right[aj] = (anc_lbl or "entailment")
+            label_for_right[aj] = anc_lbl or "entailment"
             best_for_right[aj] = (li_anchor, anc_lbl or "entailment")
 
     # For the embedder, pass:
@@ -1412,7 +1443,9 @@ def _render_right_col(
     # - if the selected left is an ADDITION, prefer the *actual right addition mate*;
     #   if missing, fall back to the anchor's contra/ent mate.
     selected_rj = target_right_idx
-    if i_left is not None:
+    # If caller provided an explicit target_right_idx (e.g., left-click computed rj),
+    # do NOT override it here. Only compute when it's missing.
+    if i_left is not None and selected_rj is None:
         try:
             # Build anchors to find left→right anchor mapping
             if i_left in (left_add_anchor or {}):
@@ -1483,7 +1516,9 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
                     hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
                     if txtR and (txtR == hyp or txtR == prem):
                         reason = (
-                            r.get("explanation") or r.get("reason") or r.get("reasoning")
+                            r.get("explanation")
+                            or r.get("reason")
+                            or r.get("reasoning")
                             or REASON_BY_LABEL.get(lab, "")
                         )
                         return (
@@ -1514,11 +1549,15 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
             if li == i_left and rj == target_right_idx:
                 lab = str(r.get("label") or "").lower()
                 reason = (
-                    r.get("explanation") or r.get("reason") or r.get("reasoning")
+                    r.get("explanation")
+                    or r.get("reason")
+                    or r.get("reasoning")
                     or REASON_BY_LABEL.get(lab, "")
                 )
                 if reason:
-                    items.append(f'<div class="reason-card">{html.escape(str(reason))}</div>')
+                    items.append(
+                        f'<div class="reason-card">{html.escape(str(reason))}</div>'
+                    )
                     break
         # Fallback: right-text equality if indices didn’t line up
         if not items:
@@ -1528,14 +1567,18 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
                 for r in b.get("nli_results") or []:
                     lab = str(r.get("label") or "").lower()
                     prem = str(r.get("premise_raw") or r.get("premise") or "")
-                    hyp  = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+                    hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
                     if txtR and (txtR == hyp or txtR == prem):
                         reason = (
-                            r.get("explanation") or r.get("reason") or r.get("reasoning")
+                            r.get("explanation")
+                            or r.get("reason")
+                            or r.get("reasoning")
                             or REASON_BY_LABEL.get(lab, "")
                         )
                         if reason:
-                            items.append(f'<div class="reason-card">{html.escape(str(reason))}</div>')
+                            items.append(
+                                f'<div class="reason-card">{html.escape(str(reason))}</div>'
+                            )
                             break
 
     # 2) If the clicked LEFT is an addition, prefer the addition record(s) anchored to its anchor,
@@ -1557,25 +1600,33 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
                 picked = None
                 for r in candidates:
                     prem = str(r.get("premise_raw") or r.get("premise") or "")
-                    hyp  = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
-                    if clicked_left_text and (clicked_left_text == prem or clicked_left_text == hyp):
-                        picked = r; break
+                    hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+                    if clicked_left_text and (
+                        clicked_left_text == prem or clicked_left_text == hyp
+                    ):
+                        picked = r
+                        break
                 if picked is None and clicked_left_text:
                     ncl = _norm(clicked_left_text)
                     for r in candidates:
                         prem = str(r.get("premise_raw") or r.get("premise") or "")
-                        hyp  = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+                        hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
                         if _norm(prem) == ncl or _norm(hyp) == ncl:
-                            picked = r; break
+                            picked = r
+                            break
                 if picked is None:
                     picked = candidates[0]
                 lab = (picked.get("label") or "").lower()
                 reason = (
-                    picked.get("explanation") or picked.get("reason") or picked.get("reasoning")
+                    picked.get("explanation")
+                    or picked.get("reason")
+                    or picked.get("reasoning")
                     or REASON_BY_LABEL.get(lab, "")
                 )
                 if reason:
-                    items.append(f'<div class="reason-card">{html.escape(str(reason))}</div>')
+                    items.append(
+                        f'<div class="reason-card">{html.escape(str(reason))}</div>'
+                    )
 
     # 3) Any record whose ANCHOR equals this left index (covers self-anchored additions too).
     if not items:
@@ -1584,11 +1635,15 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
             if _anchor_as_int(r.get("anchor")) != i_left:
                 continue
             reason = (
-                r.get("explanation") or r.get("reason") or r.get("reasoning")
+                r.get("explanation")
+                or r.get("reason")
+                or r.get("reasoning")
                 or REASON_BY_LABEL.get(lab, "")
             )
             if reason:
-                items.append(f'<div class="reason-card">{html.escape(str(reason))}</div>')
+                items.append(
+                    f'<div class="reason-card">{html.escape(str(reason))}</div>'
+                )
                 break
 
     # 4) Else: a record that maps by the left index (any label)
@@ -1599,11 +1654,15 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
             if li != i_left:
                 continue
             reason = (
-                r.get("explanation") or r.get("reason") or r.get("reasoning")
+                r.get("explanation")
+                or r.get("reason")
+                or r.get("reasoning")
                 or REASON_BY_LABEL.get(lab, "")
             )
             if reason:
-                items.append(f'<div class="reason-card">{html.escape(str(reason))}</div>')
+                items.append(
+                    f'<div class="reason-card">{html.escape(str(reason))}</div>'
+                )
                 break
 
     # 5) If still nothing and the clicked LEFT span is an addition → generic addition reason.
@@ -1611,7 +1670,9 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
         try:
             left_add_anchor, *_ = _build_addition_anchors(b)
             if i_left in (left_add_anchor or {}):
-                items.append(f'<div class="reason-card">{html.escape(REASON_BY_LABEL.get("addition",""))}</div>')
+                items.append(
+                    f'<div class="reason-card">{html.escape(REASON_BY_LABEL.get("addition",""))}</div>'
+                )
         except Exception:
             pass
 
@@ -1624,7 +1685,9 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
             if sev.get(lbl, 0) > sev.get(worst, 0):
                 worst = lbl
         if worst:
-            items.append(f'<div class="reason-card">{html.escape(REASON_BY_LABEL.get(worst, ""))}</div>')
+            items.append(
+                f'<div class="reason-card">{html.escape(REASON_BY_LABEL.get(worst, ""))}</div>'
+            )
 
     return (
         '<div class="reason-wrap"><div class="reason-title"><b>Explanation</b></div>'
