@@ -941,48 +941,26 @@ def _render_left(
                 if best_lbl == "equivalent":
                     best_lbl = "entailment"
 
-                # term highlighting if this left is focused (position-aware)
-                if focus and focus[0] == pi and focus[1] == i1 and contra_terms:
-                    # find counterpart right text for a position mask
-                    mate_txt = None
-                    if best_r is not None and 0 <= best_r < len(out2):
-                        mate_txt = _get_claim_text(out2[best_r])
-                    mask = (
-                        _compute_diff_mask(raw, mate_txt)
-                        if mate_txt is not None
-                        else None
-                    )
-                    txt = _wrap_terms_html(
-                        raw, (contra_terms.get("from_span_1") or []), mask
-                    )
-                else:
-                    txt = _escape(raw)
-
                 # NLI color for the left span (worst label among its links)
                 worst_lbl = (left_color.get(i1, "") or "").lower()
-                cls = "hl " + worst_lbl
                 self_col = _hover_color(worst_lbl)
-
-                # Make the focused left span look selected right after re-render
-                if focus and focus[0] == pi and focus[1] == i1:
-                    cls = cls + " selected"
 
                 # Decide if THIS left span is an addition and compute anchors
                 is_add = i1 in left_add_anchor
+                cls = "hl addition" if is_add else ("hl " + worst_lbl)
                 if is_add:
-                    cls = "hl addition"
                     self_col = _hover_color("addition")
                 anc_li = left_add_anchor.get(i1)
                 # mark self-anchored (LLM anchored to itself)
                 is_self_anchor = is_add and (anc_li == i1)
-                # display-anchor: if self-anchored, prefer neighbor (next else previous)
+                # Display-anchor:
+                #   - if this is the *first* sentence and self-anchored → show the NEXT sentence (original UX)
+                #   - otherwise keep the real anchor (stable)
                 disp_anc_li = anc_li
-                if is_self_anchor and len(out1) > 1:
-                    disp_anc_li = (
-                        i1 + 1 if (i1 + 1) < len(out1) else (i1 - 1 if i1 > 0 else i1)
-                    )
+                if is_self_anchor and i1 == 0 and len(out1) > 1:
+                    disp_anc_li = 1
 
-                # RIGHT anchor for brackets (contra>ent) derived from the left anchor itself
+                # RIGHT anchor for brackets (contra>ent) derived from the (display) left anchor itself
                 anc_rj, anc_lbl = None, ""
                 use_lbl_for = disp_anc_li if disp_anc_li is not None else anc_li
                 if (use_lbl_for is not None) and (
@@ -994,13 +972,26 @@ def _render_left(
                     anc_rj, anc_lbl = _best_right_for_left_anchor(b, use_lbl_for)
 
                 # Cross-doc mate target:
-                # - for additions → point to RIGHT *anchor* if available
-                # - otherwise → best_r as before
-                if is_add and anc_rj is not None:
-                    target_attr = f' data-target="R-{pi}-{anc_rj}"'
-                    hcolor_attr = (
-                        f' data-hcolor="{_hover_color(anc_lbl or "entailment")}"'
-                    )
+                # - for additions → **prefer the TRUE right addition mate** when known
+                #   (this is what we want highlighted & bracketed),
+                #   otherwise fall back to the anchor's contra/ent mate.
+                # - for non-additions → best_r as before.
+                j_add_for_left = left_add_to_right_add.get(i1) if is_add else None
+                if is_add:
+                    if j_add_for_left is not None:
+                        target_attr = f' data-target="R-{pi}-{j_add_for_left}"'
+                        # bracket color comes from the left anchor’s own best link (contra > ent)
+                        hcolor_attr = (
+                            f' data-hcolor="{_hover_color(anc_lbl or "entailment")}"'
+                        )
+                    elif anc_rj is not None:
+                        target_attr = f' data-target="R-{pi}-{anc_rj}"'
+                        hcolor_attr = (
+                            f' data-hcolor="{_hover_color(anc_lbl or "entailment")}"'
+                        )
+                    else:
+                        target_attr = ""
+                        hcolor_attr = ""
                 else:
                     target_attr = (
                         f' data-target="R-{pi}-{best_r}"' if best_r is not None else ""
@@ -1020,17 +1011,50 @@ def _render_left(
                         extras.append(f'data-lanchor="L-{pi}-{disp_anc_li}"')
                     if is_self_anchor:
                         extras.append('data-selfanchor="1"')
-                    # Point to the *actual* right addition partner (blue → brackets on click)
-                    ranchor = None
-                    j_add = left_add_to_right_add.get(i1)
-                    if j_add is not None:
-                        ranchor = j_add
-                    elif anc_rj is not None:
-                        ranchor = anc_rj
-                    if ranchor is not None:
-                        extras.append(f'data-ranchor="R-{pi}-{ranchor}"')
+                    # Bracket the RIGHT **anchor** (counterpart of the left anchor) — not the right addition mate.
+                    if anc_rj is not None:
+                        extras.append(f'data-ranchor="R-{pi}-{anc_rj}"')
+                    # (Optional) expose the right addition mate for tooling/QA; JS ignores it today.
+                    if j_add_for_left is not None:
+                        extras.append(f'data-rmate="R-{pi}-{j_add_for_left}"')
 
                 extra_attr = (" " + " ".join(extras)) if extras else ""
+
+                # NOW do term highlighting (we finally know is_add & j_add_for_left)
+                if focus and focus[0] == pi and focus[1] == i1 and contra_terms:
+                    # find counterpart right text for a position mask
+                    mate_txt = None
+                    if (
+                        is_add
+                        and j_add_for_left is not None
+                        and 0 <= j_add_for_left < len(out2)
+                    ):
+                        mate_txt = _get_claim_text(out2[j_add_for_left])
+                    if (
+                        mate_txt is None
+                        and best_r is not None
+                        and 0 <= best_r < len(out2)
+                    ):
+                        mate_txt = _get_claim_text(out2[best_r])
+                    mask = (
+                        _compute_diff_mask(raw, mate_txt)
+                        if mate_txt is not None
+                        else None
+                    )
+                    # Orientation-aware yellow terms
+                    orient = (contra_terms or {}).get("_orientation", "")
+                    if is_add and orient == "anchor-vs-left":
+                        yterms = contra_terms.get("from_span_2") or []
+                    else:
+                        yterms = contra_terms.get("from_span_1") or []
+                    txt = _wrap_terms_html(raw, yterms, mask)
+                else:
+                    txt = _escape(raw)
+
+                # Make the focused left span look selected right after re-render
+                if focus and focus[0] == pi and focus[1] == i1:
+                    cls = cls + " selected"
+
                 # If THIS is the focused left ADDITION and we do have delta/contra terms,
                 # paint the body as "entailment-feel" green so yellow tokens pop clearly.
                 if (
@@ -1522,13 +1546,12 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
                             )
                             break
 
-    # 2) Else: a record that maps by the left index (or whose explicit anchor == i_left).
+    # 2) Prefer an explicit record whose ANCHOR equals this left index (typical for additions)
     if not items:
         for r in b.get("nli_results") or []:
-            li, _rj = _map_record_indices(b, r)
             lab = str(r.get("label") or "").lower()
             anc = _anchor_as_int(r.get("anchor"))
-            if li != i_left and anc != i_left:
+            if anc != i_left:
                 continue
             reason = (
                 r.get("explanation")
@@ -1541,8 +1564,28 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
                     f'<div class="reason-card">{html.escape(str(reason))}</div>'
                 )
                 break
-    # 2.5) If still nothing and the clicked LEFT span is an addition (has a left-anchor),
-    # show generic "addition" reason so the box isn't empty (end-of-paragraph cases).
+
+    # 3) Else: a record that maps by the left index (any label)
+    if not items:
+        for r in b.get("nli_results") or []:
+            li, _rj = _map_record_indices(b, r)
+            lab = str(r.get("label") or "").lower()
+            if li != i_left:
+                continue
+            reason = (
+                r.get("explanation")
+                or r.get("reason")
+                or r.get("reasoning")
+                or REASON_BY_LABEL.get(lab, "")
+            )
+            if reason:
+                items.append(
+                    f'<div class="reason-card">{html.escape(str(reason))}</div>'
+                )
+                break
+
+    # 3.5) If still nothing and the clicked LEFT span is an addition with an anchor,
+    # show generic "addition" reason as the LAST resort.
     if not items and b.get("nli_results"):
         try:
             left_add_anchor, *_ = _build_addition_anchors(b)
@@ -1803,6 +1846,9 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                                 bool(use_llm_contra),
                                 contra_model_id or "gpt-4o",
                             )
+                            # orientation: LEFT vs RIGHT addition
+                            if isinstance(terms, dict):
+                                terms["_orientation"] = "left-vs-right"
                             rj = maybe_rj
                         elif (
                             (li_anchor is not None)
@@ -1825,6 +1871,38 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                                     bool(use_llm_contra),
                                     contra_model_id or "gpt-4o",
                                 )
+                                # orientation: ANCHOR vs LEFT addition
+                                if isinstance(terms, dict):
+                                    terms["_orientation"] = "anchor-vs-left"
+                                rj = None
+                    else:
+                        # Fallback: if we failed to recover addition anchors (edge cases),
+                        # do an immediate neighbor-based anchor so delta still shows on first click.
+                        out1 = block.get("output_1") or []
+                        if 0 <= l_ < len(out1):
+                            # neighbor rule: if first → next, else previous
+                            alt_anchor = (
+                                1
+                                if (l_ == 0 and len(out1) > 1)
+                                else (l_ - 1 if l_ > 0 else None)
+                            )
+                            if alt_anchor is not None and 0 <= alt_anchor < len(out1):
+                                terms = _get_delta_terms(
+                                    str(
+                                        out1[alt_anchor].get("claim")
+                                        or out1[alt_anchor].get("input")
+                                        or ""
+                                    ),
+                                    str(
+                                        out1[l_].get("claim")
+                                        or out1[l_].get("input")
+                                        or ""
+                                    ),
+                                    bool(use_llm_contra),
+                                    contra_model_id or "gpt-4o",
+                                )
+                                if isinstance(terms, dict):
+                                    terms["_orientation"] = "anchor-vs-left"
                                 rj = None
             except Exception:
                 # fail-safe: ignore delta on error; UI will still bracket anchors

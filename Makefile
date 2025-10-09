@@ -8,7 +8,7 @@ PRETTIER?=npx --yes prettier@3
 app_dirs := .
 tests_dir := tests/
 web_dirs := app/web
-WEB_GLOBS:="$(web_dirs)/**/*.{js,css}"
+WEB_GLOBS:="$(web_dirs)/**/*.{css,}"
 PRETTIER := ./node_modules/.bin/prettier
 
 
