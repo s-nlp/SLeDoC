@@ -78,6 +78,16 @@ def _alnum_len(s: str) -> int:
     return len(re.sub(r"[^\w]", "", s, flags=re.UNICODE))
 
 
+def _anchor_as_int(x) -> Optional[int]:
+    try:
+        if isinstance(x, str):
+            x = x.strip()
+        ai = int(x)
+        return ai
+    except Exception:
+        return None
+
+
 def _compute_diff_mask(a: str, b: str) -> List[bool]:
     """
     Return a boolean mask for `a` (len == len(a)) where True marks positions that
@@ -723,7 +733,9 @@ def _map_record_indices(
     return li, rj
 
 
-def _is_addition_pair(block: Dict[str, Any], li: Optional[int], rj: Optional[int]) -> bool:
+def _is_addition_pair(
+    block: Dict[str, Any], li: Optional[int], rj: Optional[int]
+) -> bool:
     """Return True if there exists an addition/neutral record that links left li and right rj in any orientation,
     or whose explicit anchor == li and maps to rj."""
     if rj is None:
@@ -759,8 +771,8 @@ def _is_self_anchor_addition(
         lab = str(rec.get("label") or "").lower()
         if lab not in ("addition", "neutral"):
             continue
-        anc = rec.get("anchor")
-        if not isinstance(anc, int) or anc != li:
+        anc = _anchor_as_int(rec.get("anchor"))
+        if anc is None or anc != li:
             continue
         li2, rj2 = _map_record_indices(block, rec)
         if rj2 == rj:
@@ -826,8 +838,8 @@ def _link_map_for_pair(
         lab = str(r.get("label") or "").lower()
         if lab not in ("neutral", "addition"):
             continue
-        anc = r.get("anchor")
-        if not isinstance(anc, int) or not (0 <= anc < len(out1)):
+        anc = _anchor_as_int(r.get("anchor"))
+        if anc is None or not (0 <= anc < len(out1)):
             continue
         prem = str(r.get("premise_raw") or r.get("premise") or "")
         hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
@@ -966,17 +978,20 @@ def _render_left(
                 # display-anchor: if self-anchored, prefer neighbor (next else previous)
                 disp_anc_li = anc_li
                 if is_self_anchor and len(out1) > 1:
-                    disp_anc_li = i1 + 1 if (i1 + 1) < len(out1) else (i1 - 1 if i1 > 0 else i1)
+                    disp_anc_li = (
+                        i1 + 1 if (i1 + 1) < len(out1) else (i1 - 1 if i1 > 0 else i1)
+                    )
 
                 # RIGHT anchor for brackets (contra>ent) derived from the left anchor itself
                 anc_rj, anc_lbl = None, ""
                 use_lbl_for = disp_anc_li if disp_anc_li is not None else anc_li
-                if (use_lbl_for is not None) and (use_lbl_for in left_anchor_to_right_anchor):
+                if (use_lbl_for is not None) and (
+                    use_lbl_for in left_anchor_to_right_anchor
+                ):
                     anc_rj, anc_lbl = left_anchor_to_right_anchor[use_lbl_for]
                 elif use_lbl_for is not None:
                     # compute on the fly
                     anc_rj, anc_lbl = _best_right_for_left_anchor(b, use_lbl_for)
- 
 
                 # Cross-doc mate target:
                 # - for additions → point to RIGHT *anchor* if available
@@ -1125,6 +1140,16 @@ def _embed_right_claims_in_paragraph(
                 if lbl in ("contradiction", "neutral", "addition", "entailment")
                 else ""
             )
+            # If we are showing delta terms for an ADDITION, lightly wash the right span green too
+            is_add = lbl in ("addition", "neutral")
+            if (
+                is_add
+                and contra_terms
+                and (target_right_idx is not None)
+                and (j_hit == int(target_right_idx))
+            ):
+                cls = cls + " as-entailment"
+
             self_col = _hover_color(lbl or "neutral")
 
             li_for_j = best_for_right.get(j_hit)
@@ -1326,6 +1351,16 @@ def _render_right_col(
         left_anchor_to_right_anchor,
         left_add_to_right_add,
     ) = _build_addition_anchors(b)
+
+    # Ensure the right-side anchor (contra > ent) shows green/red background (not empty class)
+    for li_anchor, (aj, anc_lbl) in (left_anchor_to_right_anchor or {}).items():
+        if aj is not None and 0 <= aj < len(out2):
+            # worst-wins aggregation
+            label_for_right[aj] = take_worst(
+                label_for_right.get(aj, ""), anc_lbl or "entailment"
+            )
+            best_for_right[aj] = (li_anchor, anc_lbl or "entailment")
+
     # For the embedder, pass:
     #   - left anchor indices for cross-doc target + data-lanchor
     #   - the exact right anchor TEXT (so it can locate the right in-pane anchor by text)
@@ -1421,7 +1456,7 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
                 for r in b.get("nli_results") or []:
                     lab = str(r.get("label") or "").lower()
                     prem = str(r.get("premise_raw") or r.get("premise") or "")
-                    hyp  = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+                    hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
                     # Match by exact right text present in either field
                     if txtR and (txtR == hyp or txtR == prem):
                         reason = (
@@ -1433,13 +1468,13 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
                         return (
                             '<div class="reason-wrap"><div class="reason-title"><b>Explanation</b></div>'
                             f'<div class="reason-card">{html.escape(str(reason or REASON_BY_LABEL.get(lab, "")))}</div>'
-                            '</div>'
+                            "</div>"
                         )
                 # Fallback: generic “addition” reason if we got here.
                 return (
                     '<div class="reason-wrap"><div class="reason-title"><b>Explanation</b></div>'
                     f'<div class="reason-card">{html.escape(REASON_BY_LABEL.get("addition",""))}</div>'
-                    '</div>'
+                    "</div>"
                 )
         return '<div class="reason-wrap"></div>'
     b = blocks[k]
@@ -1461,7 +1496,9 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
                     or REASON_BY_LABEL.get(lab, "")
                 )
                 if reason:
-                    items.append(f'<div class="reason-card">{html.escape(str(reason))}</div>')
+                    items.append(
+                        f'<div class="reason-card">{html.escape(str(reason))}</div>'
+                    )
                     break
         # If nothing matched by indices, try matching by right-text equality (useful for right-only additions).
         if not items and target_right_idx is not None:
@@ -1471,7 +1508,7 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
                 for r in b.get("nli_results") or []:
                     lab = str(r.get("label") or "").lower()
                     prem = str(r.get("premise_raw") or r.get("premise") or "")
-                    hyp  = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
+                    hyp = str(r.get("hypothesis_raw") or r.get("hypothesis") or "")
                     if txtR and (txtR == hyp or txtR == prem):
                         reason = (
                             r.get("explanation")
@@ -1480,7 +1517,9 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
                             or REASON_BY_LABEL.get(lab, "")
                         )
                         if reason:
-                            items.append(f'<div class="reason-card">{html.escape(str(reason))}</div>')
+                            items.append(
+                                f'<div class="reason-card">{html.escape(str(reason))}</div>'
+                            )
                             break
 
     # 2) Else: a record that maps by the left index (or whose explicit anchor == i_left).
@@ -1488,7 +1527,7 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
         for r in b.get("nli_results") or []:
             li, _rj = _map_record_indices(b, r)
             lab = str(r.get("label") or "").lower()
-            anc = r.get("anchor") if isinstance(r.get("anchor"), int) else None
+            anc = _anchor_as_int(r.get("anchor"))
             if li != i_left and anc != i_left:
                 continue
             reason = (
@@ -1498,8 +1537,21 @@ def _render_reason(blocks, focus, target_right_idx: Optional[int] = None):
                 or REASON_BY_LABEL.get(lab, "")
             )
             if reason:
-                items.append(f'<div class="reason-card">{html.escape(str(reason))}</div>')
+                items.append(
+                    f'<div class="reason-card">{html.escape(str(reason))}</div>'
+                )
                 break
+    # 2.5) If still nothing and the clicked LEFT span is an addition (has a left-anchor),
+    # show generic "addition" reason so the box isn't empty (end-of-paragraph cases).
+    if not items and b.get("nli_results"):
+        try:
+            left_add_anchor, *_ = _build_addition_anchors(b)
+            if i_left in (left_add_anchor or {}):
+                items.append(
+                    f'<div class="reason-card">{html.escape(REASON_BY_LABEL.get("addition",""))}</div>'
+                )
+        except Exception:
+            pass
 
     # 3) If still nothing matched try an explicit (addition|neutral) whose anchor == i_left
     if not items:
@@ -1752,10 +1804,16 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                                 contra_model_id or "gpt-4o",
                             )
                             rj = maybe_rj
-                        elif (li_anchor is not None) and 0 <= l_ < len(out1) and 0 <= li_anchor < len(out1):
+                        elif (
+                            (li_anchor is not None)
+                            and 0 <= l_ < len(out1)
+                            and 0 <= li_anchor < len(out1)
+                        ):
                             # 3) LAST RESORT: compute delta vs LEFT ANCHOR (right mate unknown)
                             anchor_text = str(
-                                out1[li_anchor].get("claim") or out1[li_anchor].get("input") or ""
+                                out1[li_anchor].get("claim")
+                                or out1[li_anchor].get("input")
+                                or ""
                             )
                             addition_text = str(
                                 out1[l_].get("claim") or out1[l_].get("input") or ""
@@ -1833,19 +1891,27 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                     contra_model_id or "gpt-4o",
                 )
             else:
-                # Any addition (self-anchored or not): extract DELTA terms and bracket anchors.
+                # ADDITION: compute DELTA terms ONLY when this right span is the true mate of a LEFT addition.
+                # (Do NOT compute for right-only additions without a left addition partner.)
                 try:
-                    is_add = _is_self_anchor_addition(block, best_li, rj) or _is_addition_pair(block, best_li, rj)
-                    if not is_add:
-                        # Try anchor discovery via addition maps
-                        _la, r2l, _r2r, _txt2l, _la2ra, _ladd2radd = _build_addition_anchors(block)
-                        if rj in (r2l or {}):
-                            if best_li is None:
-                                best_li = r2l[rj]
-                            is_add = True
-                    if is_add and best_li is not None:
-                        left_text = str(out1[best_li].get("claim") or out1[best_li].get("input") or "")
-                        right_text = str(out2[rj].get("claim") or out2[rj].get("input") or "")
+                    _la, r2l, _r2r, _txt2l, _la2ra, _ladd2radd = (
+                        _build_addition_anchors(block)
+                    )
+                    # try to bind left partner for this right
+                    if best_li is None and rj in (r2l or {}):
+                        best_li = r2l[rj]
+                    has_true_pair = (best_li is not None) and (
+                        _ladd2radd.get(best_li) == rj
+                    )
+                    if has_true_pair:
+                        left_text = str(
+                            out1[best_li].get("claim")
+                            or out1[best_li].get("input")
+                            or ""
+                        )
+                        right_text = str(
+                            out2[rj].get("claim") or out2[rj].get("input") or ""
+                        )
                         if left_text and right_text:
                             terms = _get_delta_terms(
                                 left_text,
@@ -1992,17 +2058,19 @@ with gr.Blocks(
                 contra_model,
                 llm_model_id,
             ):
-                (align_path, pairs_path, preview, left_html, right, pairs) = _orchestrate(
-                    doc1_f,
-                    doc2_f,
-                    bool(use_llm),
-                    nli_model_id,
-                    device_v,
-                    int(bs),
-                    int(win),
-                    float(thr),
-                    sys_prompt,
-                    llm_model_id or "gpt-4o",
+                (align_path, pairs_path, preview, left_html, right, pairs) = (
+                    _orchestrate(
+                        doc1_f,
+                        doc2_f,
+                        bool(use_llm),
+                        nli_model_id,
+                        device_v,
+                        int(bs),
+                        int(win),
+                        float(thr),
+                        sys_prompt,
+                        llm_model_id or "gpt-4o",
+                    )
                 )
                 # Precompute contradiction terms once for all blocks so clicks are instant and stable
                 try:
@@ -2035,7 +2103,10 @@ with gr.Blocks(
                         value=json.loads(preview), visible=False
                     ),  # artifacts_json
                     gr.update(
-                        choices=choices, value=default, interactive=True, visible=True,
+                        choices=choices,
+                        value=default,
+                        interactive=True,
+                        visible=True,
                     ),  # pair_picker
                 )
 

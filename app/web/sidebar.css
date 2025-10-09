@@ -1,0 +1,38 @@
+/* Sidebar placed on the left bottom */
+#sidebar {
+  position: fixed; /* stay in place when scrolling */
+  left: 0; /* stick to left edge */
+  bottom: 0; /* stick to bottom edge */
+  width: 140px; /* fixed width of a sidebar */
+
+  /* look & feel */
+  background: #202124; /* dark gray background */
+  color: #fff; /* white text */
+  padding: 12px 8px; /* inner padding */
+  box-sizing: border-box; /* include padding in width */
+
+  display: flex; /* flex container */
+  flex-direction: column; /* stack items vertically */
+  gap: 8px; /* space between items */
+}
+
+/* buttons inside the bar */
+#sidebar a {
+  display: block; /* make links block-level */
+  padding: 8px 4px; /* inner padding */
+  border-radius: 4px; /* rounded corners */
+  color: #fff; /* white text */
+  text-decoration: none; /* no underline */
+  text-align: center; /* center text */
+  background: #3d4043; /* slightly lighter bg */
+  font-weight: 600; /* semi-bold text */
+  font-size: 14px; /* slightly larger text */
+}
+#sidebar a:hover {
+  background: #5f6368; /* background of a button when hover */
+}
+
+/* keep main app shifted right so it doesn’t sit under the bar */
+body {
+  margin-left: 140px !important; /* move main content to the reight to not cover with sidebar */
+}

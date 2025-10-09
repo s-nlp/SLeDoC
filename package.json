@@ -1,0 +1,27 @@
+{
+  "name": "semantic-missmatching",
+  "version": "1.0.0",
+  "description": "Gradio-based dashboards for Semantic-Mismatch",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/s-nlp/semantic-missmatching.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/s-nlp/semantic-missmatching/issues"
+  },
+  "homepage": "https://github.com/s-nlp/semantic-missmatching#readme"
+}
