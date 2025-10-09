@@ -84,7 +84,9 @@ _p_align = resolve_default_prompt_path("llm_align_default")
 CLAIM_EXTRACTOR_SYSTEM_PROMPT: str = load_prompt(
     "CLAIM_EXTRACTOR_SYSTEM_PROMPT",
     "CLAIM_EXTRACTOR_SYSTEM_PROMPT_FILE",
-    default_text=(Path(_p_align).read_text(encoding="utf-8").strip() if _p_align else ""),
+    default_text=(
+        Path(_p_align).read_text(encoding="utf-8").strip() if _p_align else ""
+    ),
 )
 
 # Public config

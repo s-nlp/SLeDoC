@@ -279,3 +279,11 @@
 #topline_row .gr-accordion {
   margin: 0;
 }
+#legend_row {
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+#swap_button {
+  min-width: 140px;
+}

@@ -6,8 +6,8 @@ import json
 import os
 import re
 import tempfile
-from pathlib import Path
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import gradio as gr
@@ -46,7 +46,14 @@ from app.settings import (
 )
 
 # Styling
-EXTRA_CSS = BASE_CSS + SIDEBAR_CSS + VIEWER_CSS
+TOOLBAR_CSS = """
+  #legend_row { align-items: center; }
+  #legend_right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  /* make buttons compact */
+  #swap_button { min-width: 0; padding: 6px 10px; font-size: 0.9rem; }
+  #dl_labels_btn .gr-button { min-width: 0; padding: 6px 10px; font-size: 0.9rem; }
+"""
+EXTRA_CSS = BASE_CSS + SIDEBAR_CSS + VIEWER_CSS + TOOLBAR_CSS
 
 
 # Helpers
@@ -1856,6 +1863,7 @@ def _orchestrate(
             system_prompt=claim_prompt,
             model_name=llm_model_id or "gpt-4o",
         )
+        pairs_path = str(pairs_path)  # ensure str for downstream File components
         pairs = json.loads(Path(pairs_path).read_text(encoding="utf-8"))
     else:
         # Stage 1
@@ -1866,7 +1874,7 @@ def _orchestrate(
             nli_model_name or (MODELS_LIST[0] if MODELS_LIST else None),
             str(claims_path),
         )
-        pairs_path = nli_out_path
+        pairs_path = str(nli_out_path)  # normalize to str
         pairs = json.loads(Path(pairs_path).read_text(encoding="utf-8"))
 
     left_html = _render_left(pairs)
@@ -2220,7 +2228,14 @@ with gr.Blocks(
             with gr.Column(scale=1):
                 run_btn = gr.Button("Run", variant="primary")
 
-            gr.HTML(_legend_html(), elem_id="viewer_legend")
+            # Legend row with Swap + labeled_spans download on the right
+            with gr.Row(elem_id="legend_row"):
+                gr.HTML(_legend_html(), elem_id="viewer_legend")
+                with gr.Row(elem_id="legend_right"):
+                    swap_btn = gr.Button("Swap", variant="secondary", elem_id="swap_button")
+                    dl_labels_json = gr.DownloadButton(
+                        label="Download spans", size="md", elem_id="dl_labels_btn"
+                    )
 
             with gr.Row(elem_id="viewer_row"):
                 with gr.Column(scale=2):
@@ -2241,10 +2256,6 @@ with gr.Blocks(
                 label="Show Document B for paragraph…",
                 interactive=False,
                 visible=False,
-            )
-            # Small download button right under the picker
-            dl_labels_json = gr.DownloadButton(
-                label="Download labeled_spans.json", size="sm"
             )
 
             # bridge for click events
@@ -2349,10 +2360,69 @@ with gr.Blocks(
                 ],
             )
 
+            # Swap handler: same as _run2 but with doc1/doc2 flipped
+            def _swap_and_run(
+                doc1_f,
+                doc2_f,
+                use_llm,
+                nli_model_id,
+                device_v,
+                bs,
+                win,
+                thr,
+                sys_prompt,
+                use_llm_contra,
+                contra_model,
+                llm_model_id,
+            ):
+                # Simply call the orchestrator with swapped inputs
+                return _run2(
+                    doc2_f,  # <- swapped
+                    doc1_f,  # <- swapped
+                    use_llm,
+                    nli_model_id,
+                    device_v,
+                    bs,
+                    win,
+                    thr,
+                    sys_prompt,
+                    use_llm_contra,
+                    contra_model,
+                    llm_model_id,
+                )
+
+            swap_btn.click(
+                _swap_and_run,
+                inputs=[
+                    doc1,
+                    doc2,
+                    use_llm_12,
+                    nli_model,
+                    device,
+                    batch_size,
+                    window_size,
+                    threshold,
+                    claim_prompt,
+                    use_llm_contra,
+                    contra_model,
+                    llm_model,
+                ],
+                outputs=[
+                    left_html,
+                    right_html,
+                    reason_html,
+                    pairs_state,
+                    align_path_state,
+                    pairs_path_state,
+                    artifacts_json,
+                    pair_picker,
+                ],
+            )
+
             def _export(p):
                 if not p:
                     return gr.update(visible=False)
-                return gr.update(value=p, visible=True)
+                return gr.update(value=str(p), visible=True)
 
             def _build_labeled_spans_json(pairs):
                 if not pairs:
