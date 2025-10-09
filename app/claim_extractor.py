@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -43,15 +44,6 @@ def run_claim_extraction(
     )
 
 
-default_api_key = os.getenv("OPENAI_API_KEY", "")
-
-if not default_api_key:
-    raise ValueError(
-        "OpenAI API key missing. Specify it in the UI or set "
-        "OPENAI_API_KEY in your environment (e.g. via .env)."
-    )
-
-
 # Low-level OpenAI wrapper with basic exponential-back-off
 @retry(
     wait=wait_random_exponential(multiplier=1, max=20),
@@ -79,10 +71,14 @@ def _chat_completion(
 def _postprocess_to_list(text: str) -> List[Dict[str, str]]:
     """
     Accept model output that *should* be valid JSON but may be wrapped in
-    ```json … ``` or stray back-ticks and safely convert to Python.
+    fenced code blocks. Extract the first fenced JSON if present, else parse raw.
     """
-    cleaned = text.replace("```json", "").replace("```", "").replace("json", "").strip()
-    return json.loads(cleaned)  # raises if still invalid → caught upstream
+    s = (text or "").strip()
+    # Prefer ```json ... ``` or ``` ... ```
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", s, flags=re.IGNORECASE)
+    if m:
+        s = m.group(1).strip()
+    return json.loads(s)
 
 
 def _extract_for_paragraph(

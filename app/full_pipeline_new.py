@@ -3,9 +3,11 @@ import difflib
 import hashlib
 import html
 import json
+import os
 import re
 import tempfile
 from pathlib import Path
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 import gradio as gr
@@ -463,6 +465,7 @@ _CONTRA_CACHE: Dict[str, Dict[str, List[str]]] = {}
 _DELTA_CACHE: Dict[str, Dict[str, List[str]]] = {}  # for addition “delta” terms
 
 
+@lru_cache(maxsize=4096)
 def _hash_pair(a: str, b: str) -> str:
     return hashlib.sha1((a + "␞" + b).encode("utf-8")).hexdigest()
 
@@ -2353,7 +2356,7 @@ with gr.Blocks(
 
             def _build_labeled_spans_json(pairs):
                 if not pairs:
-                    return gr.update(visible=True)
+                    return gr.update(visible=False)
                 tmpdir = Path(tempfile.mkdtemp())
                 outp = tmpdir / "labeled_spans.json"
                 rows = []
@@ -2472,4 +2475,7 @@ with gr.Blocks(
 
 # Fast launch guard
 if __name__ == "__main__":
-    demo.launch(show_error=True)
+    # queue to keep UI responsive during async + background work
+    demo.queue(concurrency_count=int(os.getenv("GRADIO_CONCURRENCY", "8"))).launch(
+        show_error=True
+    )

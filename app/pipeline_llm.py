@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -87,9 +88,12 @@ def _chat_completion(
 
 
 def _postprocess_to_list(text: str) -> List[Dict[str, Any]]:
-    # снимаем ```json/``` заборы, парсим JSON
-    cleaned = (text or "").replace("```json", "").replace("```", "").strip()
-    return json.loads(cleaned)
+    # Robustly strip optional code fences and parse JSON
+    s = (text or "").strip()
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", s, flags=re.IGNORECASE)
+    if m:
+        s = m.group(1).strip()
+    return json.loads(s)
 
 
 def _build_user_prompt(p1: str, p2: str) -> str:

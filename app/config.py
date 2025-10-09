@@ -74,27 +74,17 @@ def resolve_default_prompt_path(prefix: str) -> str | None:
 
 
 # Prompt resolution with file → env → default fallback
+_p_llm = resolve_default_prompt_path("llm_nli_system")
 LLM_NLI_SYSTEM_PROMPT: str = load_prompt(
     "LLM_NLI_SYSTEM_PROMPT",
     "LLM_NLI_SYSTEM_PROMPT_FILE",
-    default_text=(
-        Path(resolve_default_prompt_path("llm_nli_system"))
-        .read_text(encoding="utf-8")
-        .strip()
-        if resolve_default_prompt_path("llm_nli_system")
-        else ""
-    ),
+    default_text=(Path(_p_llm).read_text(encoding="utf-8").strip() if _p_llm else ""),
 )
+_p_align = resolve_default_prompt_path("llm_align_default")
 CLAIM_EXTRACTOR_SYSTEM_PROMPT: str = load_prompt(
     "CLAIM_EXTRACTOR_SYSTEM_PROMPT",
     "CLAIM_EXTRACTOR_SYSTEM_PROMPT_FILE",
-    default_text=(
-        Path(resolve_default_prompt_path("llm_align_default"))
-        .read_text(encoding="utf-8")
-        .strip()
-        if resolve_default_prompt_path("llm_align_default")
-        else ""
-    ),
+    default_text=(Path(_p_align).read_text(encoding="utf-8").strip() if _p_align else ""),
 )
 
 # Public config
