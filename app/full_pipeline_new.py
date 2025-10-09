@@ -69,7 +69,6 @@ RUS_STOPWORDS_SHORT = {
     "у",
 }
 MIN_TERM_ALNUM_LEN = 2  # require ≥2 alnum chars to highlight (to avoid 'в', 'и', etc)
-
 MODELS_LIST = _list_models()
 
 
@@ -1285,6 +1284,12 @@ def _embed_right_claims_in_paragraph(
                     la = anchor_idx_for_right[j_hit]
                     if left_add_to_right_add.get(la) == j_hit:
                         extras.append('data-selfanchor="1"')
+                # expose the *left addition mate* for this right addition (if any)
+                if left_add_to_right_add:
+                    for li_add, rj_add in left_add_to_right_add.items():
+                        if int(rj_add) == int(j_hit):
+                            extras.append(f'data-lmate="L-{k}-{li_add}"')
+                            break
             kind_attr = (" " + " ".join(extras)) if extras else ""
 
             # If this is the specific right claim we're focusing on, inject contradicting terms
@@ -1772,7 +1777,9 @@ def _align_stage0(
 
     # Enforce document length restriction (≤ 5000 characters each)
     try:
-        paragraphs_a = merge_incomplete_sentences(get_paragraphs_from_docx(p1))
+        paragraphs_a = separate_points(
+            merge_incomplete_sentences(get_paragraphs_from_docx(p1))
+        )
         paragraphs_b = separate_points(
             merge_incomplete_sentences(get_paragraphs_from_docx(p2))
         )

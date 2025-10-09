@@ -185,11 +185,15 @@
     const s = t && t.closest ? t.closest('span.hl') : null;
     if (s) {
       const tgt = s.dataset.target || '';
-      // For ADDITION: keep the hovered span blue; color only its mate/anchor.
       if (s.dataset.kind === 'addition') {
-        hi(s.id, null); // don't repaint self bg
-        if (tgt) hi(tgt, s.dataset.hcolor || '');
+        // New behavior: pair ONLY with another addition if present; never with anchors.
+        const mateId = s.dataset.rmate || s.dataset.lmate || '';
+        // Keep self as-is (no green/red wash), outline only:
+        hi(s.id, null);
+        // If there is an explicit addition mate, outline it too; otherwise do nothing cross-panel
+        if (mateId) hi(mateId, null);
       } else {
+        // Non-additions keep normal cross-highlight
         hi(s.id, s.dataset.hcolor || '');
         if (tgt) hi(tgt, s.dataset.hcolor || '');
       }
@@ -204,7 +208,12 @@
     if (s) {
       const tgt = s.dataset.target || '';
       bye(s.id);
-      if (tgt) bye(tgt);
+      if (s.dataset.kind === 'addition') {
+        const mateId = s.dataset.rmate || s.dataset.lmate || '';
+        if (mateId) bye(mateId);
+      } else {
+        if (tgt) bye(tgt);
+      }
     }
   }, {capture:true});
 
