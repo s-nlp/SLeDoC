@@ -932,6 +932,33 @@ def _render_left(
         # We also need "where does a LEFT anchor point on the RIGHT?" → use entailment map
         ent_L_to_R, _ent_R_to_L = _entailment_maps(b)
 
+        # A left claim is an "orphan addition" if it has NO links at all (no contra/ent/neutral)
+        # and we do not already have an addition anchor for it. Anchor it to the last sentence before it.
+        fallback_left_add_anchor: Dict[int, int] = {}
+        if out1:
+            for i in range(len(out1)):
+                raw_i = str(out1[i].get("claim") or out1[i].get("input") or "").strip()
+                if not raw_i:
+                    continue
+                # already anchored as addition
+                if i in (left_add_anchor or {}):
+                    continue
+                # any existing links → not an orphan
+                if links.get(i):
+                    continue
+                # first sentence has no "previous" to anchor to; skip it
+                if i == 0:
+                    continue
+                # Anchor to immediately previous left sentence
+                fallback_left_add_anchor[i] = i - 1
+
+        if fallback_left_add_anchor:
+            left_add_anchor.update(fallback_left_add_anchor)
+            for li_add, li_anchor in fallback_left_add_anchor.items():
+                if li_anchor not in (left_anchor_to_right_anchor or {}):
+                    rj_anchor, lbl_anchor = _best_right_for_left_anchor(b, li_anchor)
+                    left_anchor_to_right_anchor[li_anchor] = (rj_anchor, lbl_anchor)
+
         # Build a set of left indices that serve as anchors for additions (neutral)
         anchor_left_idxs = set()
         idx1 = _index_claims(out1)
@@ -1796,8 +1823,7 @@ def _align_stage0(
     except Exception as e:
         # Surface a real error instead of continuing
         msg = f"Failed to read documents: {e}"
-        gr.Error(msg)
-        raise
+        raise gr.Error(msg)
 
     len_a = sum(map(len, paragraphs_a))
     len_b = sum(map(len, paragraphs_b))

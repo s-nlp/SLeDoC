@@ -91,6 +91,7 @@ class Encoder:
     def load(cls, model_id: str, device: str = "cpu") -> "Encoder":
         tok = AutoTokenizer.from_pretrained(model_id)
         mdl = AutoModel.from_pretrained(model_id).to(device)
+        mdl.eval()
         return cls(tok, mdl, device)
 
     @torch.no_grad()
