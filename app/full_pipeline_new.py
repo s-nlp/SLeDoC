@@ -997,14 +997,15 @@ def _render_left(
                 # - for non-additions → best_r as before.
                 j_add_for_left = left_add_to_right_add.get(i1) if is_add else None
                 if is_add:
-                    if j_add_for_left is not None:
-                        target_attr = f' data-target="R-{pi}-{j_add_for_left}"'
-                        # bracket color comes from the left anchor’s own best link (contra > ent)
+                    # Always target the RIGHT **anchor** (contra > ent) so the right pane highlights green/red.
+                    if anc_rj is not None:
+                        target_attr = f' data-target="R-{pi}-{anc_rj}"'
                         hcolor_attr = (
                             f' data-hcolor="{_hover_color(anc_lbl or "entailment")}"'
                         )
-                    elif anc_rj is not None:
-                        target_attr = f' data-target="R-{pi}-{anc_rj}"'
+                    elif j_add_for_left is not None:
+                        # Fallback only if no right anchor was found
+                        target_attr = f' data-target="R-{pi}-{j_add_for_left}"'
                         hcolor_attr = (
                             f' data-hcolor="{_hover_color(anc_lbl or "entailment")}"'
                         )
@@ -1030,7 +1031,7 @@ def _render_left(
                         extras.append(f'data-lanchor="L-{pi}-{disp_anc_li}"')
                     if is_self_anchor:
                         extras.append('data-selfanchor="1"')
-                    # Bracket the RIGHT **anchor** (counterpart of the left anchor) — not the right addition mate.
+                    # Bracket the RIGHT **in-pane anchor** (counterpart of the left anchor).
                     if anc_rj is not None:
                         extras.append(f'data-ranchor="R-{pi}-{anc_rj}"')
                     # (Optional) expose the right addition mate for tooling/QA; JS ignores it today.
@@ -1409,14 +1410,40 @@ def _render_right_col(
         left_add_to_right_add,
     ) = _build_addition_anchors(b)
 
-    # Ensure the right-side anchor (contra > ent) shows green/red background (not empty class)
+    # Ensure the right-side **anchor** (contra > ent) shows green/red background,
+    # but do NOT accidentally promote a *right addition* to green.
+    right_add_idxs = set((right_add_to_left_anchor or {}).keys())
     for li_anchor, (aj, anc_lbl) in (left_anchor_to_right_anchor or {}).items():
-        if aj is not None and 0 <= aj < len(out2):
-            # Anchor color must reflect the anchor’s own best link (contra > ent), not be “downgraded” to blue by synthesized additions.
-            # Therefore we **override** whatever was there.
-            label_for_right[aj] = anc_lbl or "entailment"
-            best_for_right[aj] = (li_anchor, anc_lbl or "entailment")
+        if aj is None or not (0 <= aj < len(out2)):
+            continue
+        # If this right index is an addition, keep it blue.
+        if aj in right_add_idxs:
+            continue
+        label_for_right[aj] = anc_lbl or "entailment"
+        best_for_right[aj] = (li_anchor, anc_lbl or "entailment")
 
+    # Promote the *real* right anchors (green/red) BUT do not accidentally recolor any right ADDITIONS.
+    if right_add_to_right_anchor and right_add_to_left_anchor:
+        right_add_idxs = set((right_add_to_left_anchor or {}).keys())
+        for r_add, r_anchor in (right_add_to_right_anchor or {}).items():
+            # skip: invalid anchor, self-anchored right, or if the anchor itself is an addition
+            if r_anchor is None or not (0 <= r_anchor < len(out2)):
+                continue
+            if r_anchor == r_add:
+                continue
+            if r_anchor in right_add_idxs:
+                continue
+            li_anchor = (right_add_to_left_anchor or {}).get(r_add)
+            if li_anchor is None:
+                continue
+            # color the *anchor* green/red (contra > ent)
+            anc_lbl = "entailment"
+            if left_anchor_to_right_anchor and li_anchor in left_anchor_to_right_anchor:
+                _rjA, _lblA = left_anchor_to_right_anchor[li_anchor]
+                if _lblA in ("contradiction", "entailment"):
+                    anc_lbl = _lblA
+            label_for_right[r_anchor] = anc_lbl
+            best_for_right[r_anchor] = (li_anchor, anc_lbl)
     # For the embedder, pass:
     #   - left anchor indices for cross-doc target + data-lanchor
     #   - the exact right anchor TEXT (so it can locate the right in-pane anchor by text)
@@ -1438,6 +1465,37 @@ def _render_right_col(
             aj = ent_L_to_R[li_anchor]
             if 0 <= aj < len(out2):
                 anchor_text_for_right[rj] = _get_claim_text(out2[aj])
+
+    # If the selected LEFT is an ADDITION, we may be using the "display anchor" (next sentence for self-anchored first).
+    # Promote that right mate as well, so its class is green/red (not blue).
+    if i_left is not None:
+        try:
+            out1_local = b.get("output_1") or []
+            (
+                left_add_anchor,
+                right_add_to_left_anchor_local,
+                right_add_to_right_anchor_local,
+                _right_text_to_left_anchor,
+                left_anchor_to_right_anchor_local,
+                _left_add_to_right_add_local,
+            ) = _build_addition_anchors(b)
+            if i_left in (left_add_anchor or {}):
+                li_anchor_real = left_add_anchor[i_left]
+                # mirror left-pane logic: if self-anchored & first -> display next sentence as anchor
+                disp_anc_li = li_anchor_real
+                if li_anchor_real == i_left and i_left == 0 and len(out1_local) > 1:
+                    disp_anc_li = 1
+                # find right mate of the display anchor for coloring
+                if disp_anc_li is not None:
+                    aj_disp, lbl_disp = _best_right_for_left_anchor(b, disp_anc_li)
+                    if aj_disp is not None and 0 <= aj_disp < len(out2):
+                        label_for_right[aj_disp] = lbl_disp or "entailment"
+                        best_for_right[aj_disp] = (
+                            disp_anc_li,
+                            (lbl_disp or "entailment"),
+                        )
+        except Exception:
+            pass
 
     # Decide which right span should be "pre-selected":
     # - if the selected left is an ADDITION, prefer the *actual right addition mate*;
@@ -1884,24 +1942,23 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                         li_anchor = left_add_anchor.get(l_)
                         out1 = block.get("output_1") or []
                         out2 = block.get("output_2") or []
-                        # 1) true right addition partner if available
-                        maybe_rj = left_add_to_right_add.get(l_)
-                        # 2) else: anchor's best right mate (contra > ent) for stable brackets & delta
-                        if (maybe_rj is None) and (li_anchor is not None):
-                            maybe_rj, _lbl = (left_anchor_to_right_anchor or {}).get(
-                                li_anchor, (None, "")
-                            )
+                        # Resolve right addition and right anchor
+                        rj_add = left_add_to_right_add.get(l_)
+                        rj_anchor, _lbl_anchor = (
+                            left_anchor_to_right_anchor or {}
+                        ).get(li_anchor, (None, ""))
+                        # Compute delta terms vs the TRUE right addition mate when possible
                         if (
-                            maybe_rj is not None
+                            rj_add is not None
                             and 0 <= l_ < len(out1)
-                            and 0 <= maybe_rj < len(out2)
+                            and 0 <= rj_add < len(out2)
                         ):
                             left_text = str(
                                 out1[l_].get("claim") or out1[l_].get("input") or ""
                             )
                             right_text = str(
-                                out2[maybe_rj].get("claim")
-                                or out2[maybe_rj].get("input")
+                                out2[rj_add].get("claim")
+                                or out2[rj_add].get("input")
                                 or ""
                             )
                             terms = _get_delta_terms(
@@ -1913,7 +1970,8 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                             # orientation: LEFT vs RIGHT addition
                             if isinstance(terms, dict):
                                 terms["_orientation"] = "left-vs-right"
-                            rj = maybe_rj
+                            # UI selection: prefer the RIGHT **anchor**; fall back to the addition if no anchor
+                            rj = rj_anchor if (rj_anchor is not None) else rj_add
                         elif (
                             (li_anchor is not None)
                             and 0 <= l_ < len(out1)
@@ -1938,7 +1996,8 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                                 # orientation: ANCHOR vs LEFT addition
                                 if isinstance(terms, dict):
                                     terms["_orientation"] = "anchor-vs-left"
-                                rj = None
+                                # No right selection if we don't know the right anchor yet
+                                rj = rj_anchor
                     else:
                         # Fallback: if we failed to recover addition anchors (edge cases),
                         # do an immediate neighbor-based anchor so delta still shows on first click.

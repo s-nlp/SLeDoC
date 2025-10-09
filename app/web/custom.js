@@ -263,8 +263,11 @@
       }
       // RIGHT dimming: keep mate + right in-pane anchor if any
       const keepRight = [];
-      if (mateId) keepRight.push(mateId);
-      if (span.dataset.kind === 'addition' && span.dataset.ranchor) keepRight.push(span.dataset.ranchor);
+      if (mateId) keepRight.push(mateId); // the right *anchor* (target)
+      if (span.dataset.kind === 'addition' && span.dataset.ranchor)
+        keepRight.push(span.dataset.ranchor); // in-pane anchor (same as target in most cases)
+      if (span.dataset.kind === 'addition' && span.dataset.rmate)
+        keepRight.push(span.dataset.rmate);   // the right *addition mate* — keep it undimmed (blue)
       dimRightSpansExcept(keepRight);
       current.keepRightIds = keepRight.slice();
       current.anchorRightIds = [];
