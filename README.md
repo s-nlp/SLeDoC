@@ -52,10 +52,12 @@ Before any launch need to create an environment file:
 ```bash
 OPENAI_API_KEY="sk-proj-"
 OPENROUTER_API_KEY="sk-or-"
-DEFAULT_MODEL="openrouter/mistral-7b"
-LLM_MAX_PARALLEL="8"
-LLM_NLI_SYSTEM_PROMPT_FILE="prompts/llm_nli_system.en.md"
-CLAIM_EXTRACTOR_SYSTEM_PROMPT_FILE="prompts/llm_align_defaut.en.md"
+OPENROUTER_BASE_URL="https://openrouter.ai/api/v1" # or your custom OpenRouter URL
+OPENAI_BASE_URL="https://api.openai.com/v1" # or your custom URL
+DEFAULT_MODEL="openrouter/mistral-7b" # How many requests to send in parallel to the LLM API
+LLM_MAX_PARALLEL="8" # How many requests to handle in parallel in the Gradio UI
+LLM_NLI_SYSTEM_PROMPT_FILE="prompts/llm_nli_system.en.md" # main prompt for NLI
+CLAIM_EXTRACTOR_SYSTEM_PROMPT_FILE="prompts/llm_align_defaut.en.md" # main prompt for CLAIM EXTRACTOR
 ```
 
 ```bash
@@ -69,10 +71,10 @@ docker run --rm -p 7860:7860 viewers
 ## local development
 ```bash
 # install deps into the active venv
-make vendor          # pip install -r requirements.txt
+make vendor
 
 # run with auto-reload
-make run             # uvicorn app.main:app --reload
+make run
 
 # format code
 make fmt
@@ -80,7 +82,7 @@ make fmt
 # static analysis
 make lint
 
-# run tests (pytest will look in tests/)
+# run tests
 make test
 
 # run a service
