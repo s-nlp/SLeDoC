@@ -28,7 +28,7 @@ from app.config import LLM_NLI_SYSTEM_PROMPT
 
 # Stage 2
 from app.nli_predict import _list_models, run_nli_file
-from app.openai_client import make_async_client, make_client
+from app.openai_client import make_async_client
 
 # Stage 1+2 via LLM
 from app.pipeline_llm import run_llm_nli_file
@@ -770,8 +770,8 @@ def _is_addition_pair(
         return False
     out1 = block.get("output_1") or []
     out2 = block.get("output_2") or []
-    idx1 = _index_claims(out1)
-    idx2 = _index_claims(out2)
+    _ = _index_claims(out1)
+    _ = _index_claims(out2)
     for rec in block.get("nli_results") or []:
         lab = str(rec.get("label") or "").lower()
         if lab not in ("addition", "neutral"):
@@ -962,12 +962,12 @@ def _render_left(
         # Build a set of left indices that serve as anchors for additions (neutral)
         anchor_left_idxs = set()
         idx1 = _index_claims(out1)
-        idx2 = _index_claims(b.get("output_2") or [])
+        _ = _index_claims(b.get("output_2") or [])
         for rr in b.get("nli_results") or []:
             lblr = str(rr.get("label") or "").lower()
             if lblr in ("neutral", "addition"):
                 prem = str(rr.get("premise_raw") or rr.get("premise") or "")
-                hyp = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
+                _ = str(rr.get("hypothesis_raw") or rr.get("hypothesis") or "")
                 i_li = idx1.get(prem)
                 # Prefer an explicit anchor index if your LLM provided one
                 anc_idx = rr.get("anchor")
@@ -2191,7 +2191,7 @@ with gr.Blocks(
     gr.HTML(nav_tag, visible=True)
 
     with gr.Tabs():
-        with gr.Tab("Full pipeline"):
+        with gr.Tab("Document Mismatch"):
             with gr.Row(elem_id="topline_row"):
                 with gr.Column(scale=1):
                     doc1 = gr.File(label="Document A (.docx)", file_types=[".docx"])
@@ -2258,7 +2258,9 @@ with gr.Blocks(
             with gr.Row(elem_id="legend_row"):
                 gr.HTML(_legend_html(), elem_id="viewer_legend")
                 with gr.Row(elem_id="legend_right"):
-                    swap_btn = gr.Button("Swap", variant="secondary", elem_id="swap_button")
+                    swap_btn = gr.Button(
+                        "Swap", variant="secondary", elem_id="swap_button"
+                    )
                     dl_labels_json = gr.DownloadButton(
                         label="Download spans", size="md", elem_id="dl_labels_btn"
                     )

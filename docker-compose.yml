@@ -7,21 +7,24 @@ services:
       - ./example_data:/app/example_data:ro
       - ./nli:/app/nli:ro
       - .env:/app/.env:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: uvicorn app.main:app --host 0.0.0.0 --port 7860
     restart: unless-stopped
     environment:
       # - LLM_PROVIDER=local or openai or openrouter
       # Local/self-hosted
-      # - LLM_BASE_URL=...
-      # - LLM_MODEL=...
-      # - LLM_API_KEY=...
+      # - OPENAI_API_KEY: "dummy"
+      # - OPENAI_BASE_URL: "http://host.docker.internal:8000/v1"
+      
       # OpenAI:
       # - OPENAI_API_KEY=sk-...
       - OPENAI_BASE_URL=https://api.openai.com/v1
+      
       # OpenRouter:
       # - USE_OPENROUTER=1
       # - OPENROUTER_API_KEY=...
-      - OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+      # - OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 
       # Prompts settings
       - LLM_NLI_SYSTEM_PROMPT_FILE="prompts/llm_nli_system.en.md"

@@ -54,7 +54,12 @@ OPENAI_API_KEY="sk-proj-"
 OPENROUTER_API_KEY="sk-or-"
 OPENROUTER_BASE_URL="https://openrouter.ai/api/v1" # or your custom OpenRouter URL
 OPENAI_BASE_URL="https://api.openai.com/v1" # or your custom URL
-DEFAULT_MODEL="openrouter/mistral-7b" # How many requests to send in parallel to the LLM API
+DEFAULT_MODEL="openrouter/mistral-7b" # or "openai/gpt-4o" or "openai/gpt-4o-mini" - any model
+
+# For local OpenAI-compatible servers, e.g., FastAPI-based ones:
+OPENAI_API_KEY="dummy"                      # required by the SDK
+OPENAI_BASE_URL="http://127.0.0.1:8000/v1"  # your FastAPI OpenAI-compatible base
+
 LLM_MAX_PARALLEL="8" # How many requests to handle in parallel in the Gradio UI
 LLM_NLI_SYSTEM_PROMPT_FILE="prompts/llm_nli_system.en.md" # main prompt for NLI
 CLAIM_EXTRACTOR_SYSTEM_PROMPT_FILE="prompts/llm_align_defaut.en.md" # main prompt for CLAIM EXTRACTOR
