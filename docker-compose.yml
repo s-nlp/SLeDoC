@@ -3,15 +3,16 @@ services:
     build: .
     ports:
       - "7860:7860"
+    env_file:
+      - .env
     volumes:
       - ./example_data:/app/example_data:ro
       - ./nli:/app/nli:ro
-      - .env:/app/.env:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: uvicorn app.main:app --host 0.0.0.0 --port 7860
     restart: unless-stopped
-    environment:
+    # environment:
       # - LLM_PROVIDER=local or openai or openrouter
       # Local/self-hosted
       # - OPENAI_API_KEY: "dummy"
@@ -19,7 +20,7 @@ services:
       
       # OpenAI:
       # - OPENAI_API_KEY=sk-...
-      - OPENAI_BASE_URL=https://api.openai.com/v1
+      # OPENAI_BASE_URL: "https://api.openai.com/v1"
       
       # OpenRouter:
       # - USE_OPENROUTER=1
@@ -27,5 +28,5 @@ services:
       # - OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 
       # Prompts settings
-      - LLM_NLI_SYSTEM_PROMPT_FILE="prompts/llm_nli_system.en.md"
-      - CLAIM_EXTRACTOR_SYSTEM_PROMPT_FILE="prompts/llm_align_defaut.en.md"
+      # LLM_NLI_SYSTEM_PROMPT_FILE: "prompts/llm_nli_system.en.md"
+      # CLAIM_EXTRACTOR_SYSTEM_PROMPT_FILE: "prompts/llm_align_defaut.en.md"
