@@ -1,5 +1,6 @@
 import json
 import re
+import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -89,8 +90,11 @@ class Encoder:
 
     @classmethod
     def load(cls, model_id: str, device: str = "cpu") -> "Encoder":
-        tok = AutoTokenizer.from_pretrained(model_id)
-        mdl = AutoModel.from_pretrained(model_id).to(device)
+        local_path = os.getenv("E5_MODEL_PATH", model_id)
+        offline = os.getenv("TRANSFORMERS_OFFLINE", "0") == "1"
+        kwargs = {"local_files_only": offline}
+        tok = AutoTokenizer.from_pretrained(local_path, **kwargs)
+        mdl = AutoModel.from_pretrained(local_path, **kwargs)
         mdl.eval()
         return cls(tok, mdl, device)
 
