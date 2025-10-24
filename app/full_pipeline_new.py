@@ -9,6 +9,7 @@ import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from zipfile import BadZipFile
 
 import gradio as gr
 
@@ -24,7 +25,7 @@ from app.align_docs import (
 
 # Stage 1
 from app.claim_extractor import DEFAULT_SYSTEM_PROMPT, run_claim_extraction
-from app.config import LLM_NLI_SYSTEM_PROMPT
+from app.config import LLM_NLI_SYSTEM_PROMPT, LLM_NLI_SYSTEM_PROMPT_CODE
 
 # Stage 2
 from app.nli_predict import _list_models, run_nli_file
@@ -111,6 +112,45 @@ def _compute_diff_mask(a: str, b: str) -> List[bool]:
             for i in range(i1, i2):
                 mask[i] = False
     return mask
+
+
+def _read_paragraphs_generic(p: Path, is_code: bool) -> list[str]:
+    """
+    - If it's a real .docx AND we're not in code mode, use the existing docx pipeline.
+    - Otherwise read as UTF-8 text and split into blank-line separated blocks (keeps indentation).
+    - If .docx load fails (e.g., mislabeled path), gracefully fall back to text.
+    """
+    if (not is_code) and p.suffix.lower() == ".docx":
+        try:
+            return separate_points(
+                merge_incomplete_sentences(get_paragraphs_from_docx(p))
+            )
+        except BadZipFile:
+            # mislabeled file; read as text below
+            pass
+        except Exception:
+            # any unexpected docx error → treat as text
+            pass
+
+    # Text/code path
+    try:
+        text = p.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        text = p.read_bytes().decode("utf-8", errors="ignore")
+
+    blocks: list[str] = []
+    buf: list[str] = []
+    for line in text.splitlines():
+        if line.strip() == "":
+            if buf:
+                blocks.append("\n".join(buf).rstrip())
+                buf = []
+        else:
+            buf.append(line.rstrip())
+    if buf:
+        blocks.append("\n".join(buf).rstrip())
+
+    return [b for b in blocks if b.strip()] or [text.strip()]
 
 
 def _wrap_terms_html(
@@ -1805,6 +1845,7 @@ def _align_stage0(
     batch_size: int,
     window_size: int,
     threshold: float,
+    use_for_code: bool = False,
 ) -> Tuple[str, str]:
     """
     Returns (align_json_path, align_preview_json_str[:N]).
@@ -1814,12 +1855,14 @@ def _align_stage0(
 
     # Enforce document length restriction (≤ 5000 characters each)
     try:
-        paragraphs_a = separate_points(
-            merge_incomplete_sentences(get_paragraphs_from_docx(p1))
-        )
-        paragraphs_b = separate_points(
-            merge_incomplete_sentences(get_paragraphs_from_docx(p2))
-        )
+        # paragraphs_a = separate_points(
+        #     merge_incomplete_sentences(get_paragraphs_from_docx(p1))
+        # )
+        # paragraphs_b = separate_points(
+        #     merge_incomplete_sentences(get_paragraphs_from_docx(p2))
+        # )
+        paragraphs_a = _read_paragraphs_generic(p1, is_code=bool(use_for_code))
+        paragraphs_b = _read_paragraphs_generic(p2, is_code=bool(use_for_code))
     except Exception as e:
         # Surface a real error instead of continuing
         msg = f"Failed to read documents: {e}"
@@ -1867,6 +1910,7 @@ def _orchestrate(
     threshold: float,
     claim_prompt: str,
     llm_model_id: Optional[str],
+    use_for_code: bool,
 ):
     """
     Stage 0 -> (1+2 via LLM) or (1 then 2) -> render viewer.
@@ -1881,12 +1925,19 @@ def _orchestrate(
         batch_size=batch_size,
         window_size=window_size,
         threshold=threshold,
+        use_for_code=use_for_code,
     )
 
     if use_llm_12:
+        # Choose prompt: code-specific vs normal
+        effective_prompt = (
+            (LLM_NLI_SYSTEM_PROMPT_CODE or claim_prompt)
+            if use_for_code
+            else claim_prompt
+        )
         pairs_path = run_llm_nli_file(
             align_path,
-            system_prompt=claim_prompt,
+            system_prompt=effective_prompt,
             model_name=llm_model_id or "gpt-4o",
         )
         pairs_path = str(pairs_path)  # ensure str for downstream File components
@@ -2194,9 +2245,51 @@ with gr.Blocks(
         with gr.Tab("Document Mismatch"):
             with gr.Row(elem_id="topline_row"):
                 with gr.Column(scale=1):
-                    doc1 = gr.File(label="Document A (.docx)", file_types=[".docx"])
+                    doc1 = gr.File(
+                        label="Document A (.docx / code / text)",
+                        file_types=[
+                            ".docx",
+                            ".txt",
+                            ".md",
+                            ".py",
+                            ".js",
+                            ".ts",
+                            ".java",
+                            ".c",
+                            ".cpp",
+                            ".go",
+                            ".rs",
+                            ".rb",
+                            ".php",
+                            ".cs",
+                            ".scala",
+                            ".kt",
+                            ".swift",
+                        ],
+                    )
                 with gr.Column(scale=1):
-                    doc2 = gr.File(label="Document B (.docx)", file_types=[".docx"])
+                    doc2 = gr.File(
+                        label="Document B (.docx / code / text)",
+                        file_types=[
+                            ".docx",
+                            ".txt",
+                            ".md",
+                            ".py",
+                            ".js",
+                            ".ts",
+                            ".java",
+                            ".c",
+                            ".cpp",
+                            ".go",
+                            ".rs",
+                            ".rb",
+                            ".php",
+                            ".cs",
+                            ".scala",
+                            ".kt",
+                            ".swift",
+                        ],
+                    )
                 with gr.Column(scale=7):
                     with gr.Accordion("⚙️ Settings", open=False):
                         with gr.Row():
@@ -2205,6 +2298,11 @@ with gr.Blocks(
                             )
                             llm_model = gr.Textbox(
                                 value="gpt-4o", label="LLM model (for combined 1+2)"
+                            )
+                            use_for_code = gr.Checkbox(
+                                value=False,
+                                label="Use for code (code-aware NLI prompt)",
+                                info="Accepts code/text files and uses a code-specific NLI system prompt.",
                             )
                         with gr.Row():
                             nli_model = gr.Dropdown(
@@ -2307,6 +2405,7 @@ with gr.Blocks(
                 use_llm_contra,
                 contra_model,
                 llm_model_id,
+                use_for_code_v,
             ):
                 (align_path, pairs_path, preview, left_html, right, pairs) = (
                     _orchestrate(
@@ -2320,6 +2419,7 @@ with gr.Blocks(
                         float(thr),
                         sys_prompt,
                         llm_model_id or "gpt-4o",
+                        bool(use_for_code_v),
                     )
                 )
                 # Precompute contradiction terms once for all blocks so clicks are instant and stable
@@ -2375,6 +2475,7 @@ with gr.Blocks(
                     use_llm_contra,
                     contra_model,
                     llm_model,
+                    use_for_code,
                 ],
                 outputs=[
                     left_html,
@@ -2402,6 +2503,7 @@ with gr.Blocks(
                 use_llm_contra,
                 contra_model,
                 llm_model_id,
+                use_for_code_v,
             ):
                 # Simply call the orchestrator with swapped inputs
                 return _run2(
@@ -2417,6 +2519,7 @@ with gr.Blocks(
                     use_llm_contra,
                     contra_model,
                     llm_model_id,
+                    use_for_code_v,
                 )
 
             swap_btn.click(
@@ -2434,6 +2537,7 @@ with gr.Blocks(
                     use_llm_contra,
                     contra_model,
                     llm_model,
+                    use_for_code,
                 ],
                 outputs=[
                     left_html,
