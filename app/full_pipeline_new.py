@@ -2269,9 +2269,14 @@ with gr.Blocks(
                             use_llm_12 = gr.Checkbox(
                                 value=True, label="Use combined Extract+NLI (LLM)"
                             )
-                            llm_model = gr.Textbox(
+                            llm_model = gr.Dropdown(
+                                choices=[
+                                    "gpt-5",
+                                    "claude-opus-4.6",
+                                ],
                                 value=DEFAULT_MODEL,
                                 label="LLM model (for combined 1+2)",
+                                allow_custom_value=True,
                             )
                             use_for_code = gr.Checkbox(
                                 value=False,

@@ -1,6 +1,6 @@
 import json
 import logging
-import pathlib
+import os
 import tempfile
 from pathlib import Path
 from typing import Dict, List
@@ -11,7 +11,7 @@ from lettucedetect.models.inference import HallucinationDetector
 from app.settings import SIDEBAR_CSS, nav_tag
 
 #  Config
-LOGLEVEL = (pathlib.os.getenv("LOGLEVEL") or "INFO").upper()
+LOGLEVEL = (os.getenv("LOGLEVEL") or "INFO").upper()
 logging.basicConfig(
     level=LOGLEVEL,
     format="%(levelname)s | %(name)s | %(message)s",
