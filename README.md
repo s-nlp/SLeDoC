@@ -2,6 +2,8 @@
 
 Gradio-based dashboards for Semantic-Mismatch
 
+Full Demo is available by the [link](https://8f4286b904ede34fdd.gradio.live)
+
 # Overview
 
 ## Repository
