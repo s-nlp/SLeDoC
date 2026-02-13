@@ -1,6 +1,6 @@
-# Semantic-Mismatch 🖥️
+# SLeDoc 🖥️
 
-Gradio-based dashboards for Semantic-Mismatch
+Gradio-based dashboards for SLeDoc
 
 Full Demo is available by the [link](https://8f4286b904ede34fdd.gradio.live)
 
@@ -11,9 +11,9 @@ Full Demo is available by the [link](https://8f4286b904ede34fdd.gradio.live)
 app/ Python package
 │
 ├─ main.py FastAPI entry – mounts all three UIs
-├─ semantic_mismatch.py Mismatch viewer (path: /mismatch)
-├─ nli.py NLI viewer (path: /nli)
-└─ pipeline.py Two-step pipeline (path: /pipeline)
+├─ full_pipeline_new.py Mismatch viewer
+├─ nli.py NLI viewer
+└─ pipeline.py Two-step pipeline
 │
 ├─ requirements.txt
 ├─ Dockerfile
