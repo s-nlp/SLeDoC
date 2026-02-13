@@ -9,7 +9,7 @@ from openai import AsyncOpenAI
 
 _OPENROUTER_BASE = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 _OPENAI_BASE = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-_APP_TITLE = os.getenv("APP_TITLE", "DoSeM (Semantic Mismatch)")
+_APP_TITLE = os.getenv("APP_TITLE", "SLeDoC")
 
 # Local FastAPI settings
 _LOCAL_BASE = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:8000")
@@ -38,6 +38,11 @@ def _want_local_provider(model: str) -> bool:
     if env in {"local", "local-openai", "local-generic"}:
         return True
     return model.strip().lower().startswith("local:")
+
+
+def _want_openrouter_provider() -> bool:
+    env = (os.getenv("LLM_PROVIDER") or "").strip().lower()
+    return env in {"openrouter", "openrouter.ai", "openrouter-ai", "router"}
 
 
 def _normalize_local_model(model: str) -> str:
@@ -183,7 +188,7 @@ def make_client(model: str):
         return client, model_id
 
     # OpenRouter or OpenAI
-    use_openrouter = _is_openrouter_model(model)
+    use_openrouter = _want_openrouter_provider() or _is_openrouter_model(model)
     if use_openrouter:
         api_key = os.getenv("OPENROUTER_API_KEY")
         base_url = _OPENROUTER_BASE
@@ -221,7 +226,7 @@ def make_async_client(model: str):
         client = _LocalAsyncClient(_LOCAL_BASE, _LOCAL_ROUTE, headers, _LOCAL_TIMEOUT)
         return client, model_id
 
-    use_openrouter = _is_openrouter_model(model)
+    use_openrouter = _want_openrouter_provider() or _is_openrouter_model(model)
     if use_openrouter:
         api_key = os.getenv("OPENROUTER_API_KEY")
         base_url = _OPENROUTER_BASE

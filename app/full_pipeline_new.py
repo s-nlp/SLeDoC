@@ -25,7 +25,7 @@ from app.align_docs import (
 
 # Stage 1
 from app.claim_extractor import DEFAULT_SYSTEM_PROMPT, run_claim_extraction
-from app.config import LLM_NLI_SYSTEM_PROMPT, LLM_NLI_SYSTEM_PROMPT_CODE
+from app.config import DEFAULT_MODEL, LLM_NLI_SYSTEM_PROMPT, LLM_NLI_SYSTEM_PROMPT_CODE
 
 # Stage 2
 from app.nli_predict import _list_models, run_nli_file
@@ -269,14 +269,15 @@ def _index_claims(claims: List[Dict[str, Any]]) -> Dict[str, int]:
     if not isinstance(claims, list):
         return idx
     for i, c in enumerate(claims):
-        s = str(c.get("claim") or c.get("input") or "").strip()
+        s = _get_claim_text(c, strip=True)
         if s:
             idx[s] = i
     return idx
 
 
-def _get_claim_text(claim: Dict[str, Any]) -> str:
-    return str(claim.get("claim") or claim.get("input") or "").strip()
+def _get_claim_text(claim: Dict[str, Any], *, strip: bool = False) -> str:
+    text = str(claim.get("claim") or claim.get("input") or "")
+    return text.strip() if strip else text
 
 
 def _entailment_maps(block: Dict[str, Any]) -> Tuple[Dict[int, int], Dict[int, int]]:
@@ -736,11 +737,11 @@ def _precompute_contra_terms_for_all(pairs, use_llm: bool, model_id: str):
             if i_left in cache:
                 continue  # already computed
 
-            left = str(out1[i_left].get("claim") or out1[i_left].get("input") or "")
-            right = str(out2[rj].get("claim") or out2[rj].get("input") or "")
+            left = _get_claim_text(out1[i_left])
+            right = _get_claim_text(out2[rj])
 
             terms = _get_contra_terms(
-                left, right, use_llm=use_llm, model_id=model_id or "gpt-4o"
+                left, right, use_llm=use_llm, model_id=model_id or DEFAULT_MODEL
             )
             cache[i_left] = {"terms": terms, "right_idx": rj}
 
@@ -775,10 +776,10 @@ def _compute_contra_terms_for_focus(
     if not cands:
         return None, None
     rj, _ = cands[0]
-    left = str(out1[i_left].get("claim") or out1[i_left].get("input") or "")
-    right = str(out2[rj].get("claim") or out2[rj].get("input") or "")
+    left = _get_claim_text(out1[i_left])
+    right = _get_claim_text(out2[rj])
     terms = _get_contra_terms(
-        left, right, use_llm=use_llm, model_id=model_id or "gpt-4o"
+        left, right, use_llm=use_llm, model_id=model_id or DEFAULT_MODEL
     )
     return {"terms": terms, "right_idx": rj}
 
@@ -977,7 +978,7 @@ def _render_left(
         fallback_left_add_anchor: Dict[int, int] = {}
         if out1:
             for i in range(len(out1)):
-                raw_i = str(out1[i].get("claim") or out1[i].get("input") or "").strip()
+                raw_i = _get_claim_text(out1[i], strip=True)
                 if not raw_i:
                     continue
                 # already anchored as addition
@@ -1022,7 +1023,7 @@ def _render_left(
 
             spans = []
             for i1, c in enumerate(out1):
-                raw = str(c.get("claim") or c.get("input") or "")
+                raw = _get_claim_text(c)
 
                 # choose best right idx by severity for this left i1 (if any)
                 best_r = None
@@ -1231,7 +1232,7 @@ def _embed_right_claims_in_paragraph(
     # Build alternation over all claim texts, longest-first to avoid partial overlaps.
     claims: List[Tuple[int, str]] = []
     for j, c in enumerate(out2 or []):
-        raw = str(c.get("claim") or c.get("input") or "").strip()
+        raw = _get_claim_text(c, strip=True)
         if raw:
             claims.append((j, raw))
     if not claims:
@@ -1938,7 +1939,7 @@ def _orchestrate(
         pairs_path = run_llm_nli_file(
             align_path,
             system_prompt=effective_prompt,
-            model_name=llm_model_id or "gpt-4o",
+            model_name=llm_model_id or DEFAULT_MODEL,
         )
         pairs_path = str(pairs_path)  # ensure str for downstream File components
         pairs = json.loads(Path(pairs_path).read_text(encoding="utf-8"))
@@ -1980,7 +1981,7 @@ def _on_pick(pairs, choice):
     )
 
 
-def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
+def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id=DEFAULT_MODEL):
     k, l_ = 0, None
     try:
         if v and v.startswith("P:"):
@@ -2003,7 +2004,7 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                     ps or [],
                     (k, l_),
                     bool(use_llm_contra),
-                    contra_model_id or "gpt-4o",
+                    contra_model_id or DEFAULT_MODEL,
                 )
                 if info:
                     # store back into cache so subsequent clicks are instant & stable
@@ -2048,19 +2049,13 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                             and 0 <= l_ < len(out1)
                             and 0 <= rj_add < len(out2)
                         ):
-                            left_text = str(
-                                out1[l_].get("claim") or out1[l_].get("input") or ""
-                            )
-                            right_text = str(
-                                out2[rj_add].get("claim")
-                                or out2[rj_add].get("input")
-                                or ""
-                            )
+                            left_text = _get_claim_text(out1[l_])
+                            right_text = _get_claim_text(out2[rj_add])
                             terms = _get_delta_terms(
                                 left_text,
                                 right_text,
                                 bool(use_llm_contra),
-                                contra_model_id or "gpt-4o",
+                                contra_model_id or DEFAULT_MODEL,
                             )
                             # orientation: LEFT vs RIGHT addition
                             if isinstance(terms, dict):
@@ -2073,20 +2068,14 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                             and 0 <= li_anchor < len(out1)
                         ):
                             # 3) LAST RESORT: compute delta vs LEFT ANCHOR (right mate unknown)
-                            anchor_text = str(
-                                out1[li_anchor].get("claim")
-                                or out1[li_anchor].get("input")
-                                or ""
-                            )
-                            addition_text = str(
-                                out1[l_].get("claim") or out1[l_].get("input") or ""
-                            )
+                            anchor_text = _get_claim_text(out1[li_anchor])
+                            addition_text = _get_claim_text(out1[l_])
                             if anchor_text and addition_text:
                                 terms = _get_delta_terms(
                                     anchor_text,
                                     addition_text,
                                     bool(use_llm_contra),
-                                    contra_model_id or "gpt-4o",
+                                    contra_model_id or DEFAULT_MODEL,
                                 )
                                 # orientation: ANCHOR vs LEFT addition
                                 if isinstance(terms, dict):
@@ -2106,18 +2095,10 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                             )
                             if alt_anchor is not None and 0 <= alt_anchor < len(out1):
                                 terms = _get_delta_terms(
-                                    str(
-                                        out1[alt_anchor].get("claim")
-                                        or out1[alt_anchor].get("input")
-                                        or ""
-                                    ),
-                                    str(
-                                        out1[l_].get("claim")
-                                        or out1[l_].get("input")
-                                        or ""
-                                    ),
+                                    _get_claim_text(out1[alt_anchor]),
+                                    _get_claim_text(out1[l_]),
                                     bool(use_llm_contra),
-                                    contra_model_id or "gpt-4o",
+                                    contra_model_id or DEFAULT_MODEL,
                                 )
                                 if isinstance(terms, dict):
                                     terms["_orientation"] = "anchor-vs-left"
@@ -2176,15 +2157,13 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
             # Only compute contradiction terms when the best link label is 'contradiction'
             terms = None
             if (best_lbl or "").lower() == "contradiction":
-                left_text = str(
-                    out1[best_li].get("claim") or out1[best_li].get("input") or ""
-                )
-                right_text = str(out2[rj].get("claim") or out2[rj].get("input") or "")
+                left_text = _get_claim_text(out1[best_li])
+                right_text = _get_claim_text(out2[rj])
                 terms = _get_contra_terms(
                     left_text,
                     right_text,
                     bool(use_llm_contra),
-                    contra_model_id or "gpt-4o",
+                    contra_model_id or DEFAULT_MODEL,
                 )
             else:
                 # ADDITION: compute DELTA terms ONLY when this right span is the true mate of a LEFT addition.
@@ -2200,20 +2179,14 @@ def _bridge_combo(ps, v, use_llm_contra=False, contra_model_id="gpt-4o"):
                         _ladd2radd.get(best_li) == rj
                     )
                     if has_true_pair:
-                        left_text = str(
-                            out1[best_li].get("claim")
-                            or out1[best_li].get("input")
-                            or ""
-                        )
-                        right_text = str(
-                            out2[rj].get("claim") or out2[rj].get("input") or ""
-                        )
+                        left_text = _get_claim_text(out1[best_li])
+                        right_text = _get_claim_text(out2[rj])
                         if left_text and right_text:
                             terms = _get_delta_terms(
                                 left_text,
                                 right_text,
                                 bool(use_llm_contra),
-                                contra_model_id or "gpt-4o",
+                                contra_model_id or DEFAULT_MODEL,
                             )
                 except Exception:
                     pass
@@ -2238,7 +2211,7 @@ with gr.Blocks(
     css=EXTRA_CSS, js=CUSTOM_JS, title="Semantic Mismatch — Full Pipeline"
 ) as demo:
     # top nav + title
-    gr.Markdown("## DoSeM — Document Semantic Mismatch")
+    gr.Markdown("## SLeDoC")
     gr.HTML(nav_tag, visible=True)
 
     with gr.Tabs():
@@ -2297,7 +2270,8 @@ with gr.Blocks(
                                 value=True, label="Use combined Extract+NLI (LLM)"
                             )
                             llm_model = gr.Textbox(
-                                value="gpt-4o", label="LLM model (for combined 1+2)"
+                                value=DEFAULT_MODEL,
+                                label="LLM model (for combined 1+2)",
                             )
                             use_for_code = gr.Checkbox(
                                 value=False,
@@ -2339,7 +2313,7 @@ with gr.Blocks(
                                 label="Use LLM to extract contradicting terms",
                             )
                             contra_model = gr.Textbox(
-                                value="gpt-4o",
+                                value=DEFAULT_MODEL,
                                 label="Model for term extraction",
                                 scale=2,
                             )
@@ -2418,7 +2392,7 @@ with gr.Blocks(
                         int(win),
                         float(thr),
                         sys_prompt,
-                        llm_model_id or "gpt-4o",
+                        llm_model_id or DEFAULT_MODEL,
                         bool(use_for_code_v),
                     )
                 )
@@ -2427,7 +2401,7 @@ with gr.Blocks(
                     pairs = _precompute_contra_terms_for_all(
                         pairs,
                         bool(use_llm_contra),
-                        (contra_model or "gpt-4o"),
+                        (contra_model or DEFAULT_MODEL),
                     )
                 except Exception:
                     # fail-safe: keep pairs as-is
@@ -2574,9 +2548,7 @@ with gr.Blocks(
                     def _anchor_payload(r):
                         anc = r.get("anchor")
                         if isinstance(anc, int) and 0 <= anc < len(out1):
-                            return anc, str(
-                                out1[anc].get("claim") or out1[anc].get("input") or ""
-                            )
+                            return anc, _get_claim_text(out1[anc])
                         return None, None
 
                     for r in b.get("nli_results") or []:
@@ -2678,6 +2650,4 @@ with gr.Blocks(
 # Fast launch guard
 if __name__ == "__main__":
     # queue to keep UI responsive during async + background work
-    demo.queue(concurrency_count=int(os.getenv("GRADIO_CONCURRENCY", "8"))).launch(
-        show_error=True
-    )
+    demo.queue().launch(show_error=True, share=True)

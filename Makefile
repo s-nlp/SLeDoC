@@ -12,7 +12,7 @@ WEB_GLOBS:="$(web_dirs)/**/*.{css,}"
 PRETTIER := ./node_modules/.bin/prettier
 
 
-.PHONY: setup vendor vendor-py vendor-web run fmt fmt-py fmt-web lint lint-py lint-web test
+.PHONY: setup vendor vendor-py vendor-web run share fmt fmt-py fmt-web lint lint-py lint-web test
 
 vendor-py:
 	$(PYTHON) -m pip install -r requirements.txt
@@ -28,6 +28,9 @@ vendor: vendor-py vendor-web
 
 run:
 	PYTHONPATH=$(APP_DIRS) $(PYTHON) -m uvicorn app.main:app --reload --port 7860
+
+share:
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m app.full_pipeline_new
 
 # Python formatting
 fmt-py:

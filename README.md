@@ -42,6 +42,8 @@ Optional:
 - `LLM_MAX_PARALLEL` — max concurrent LLM calls (default: 8).
 - `LLM_NLI_SYSTEM_PROMPT_FILE` — path to system prompt for the end-to-end LLM branch.
 - `CLAIM_EXTRACTOR_SYSTEM_PROMPT_FILE` — path to system prompt for the claim-extraction stage.
+- `LLM_PROVIDER` — force provider: `openrouter` or `local`. If unset, provider is inferred from the model name.
+- `DEFAULT_MODEL` — default LLM model id used by the UI and pipeline (e.g., `openrouter/mistral-7b`).
 
 You may also inline long prompts via `LLM_NLI_SYSTEM_PROMPT` / `CLAIM_EXTRACTOR_SYSTEM_PROMPT`
 
@@ -55,6 +57,7 @@ OPENROUTER_API_KEY="sk-or-"
 OPENROUTER_BASE_URL="https://openrouter.ai/api/v1" # or your custom OpenRouter URL
 OPENAI_BASE_URL="https://api.openai.com/v1" # or your custom URL
 DEFAULT_MODEL="openrouter/mistral-7b" # or "openai/gpt-4o" or "openai/gpt-4o-mini" - any model
+LLM_PROVIDER="openrouter"            # optional: force OpenRouter even without a provider prefix
 
 # For local OpenAI-compatible servers, e.g., FastAPI-based ones:
 OPENAI_API_KEY="dummy"                      # required by the SDK

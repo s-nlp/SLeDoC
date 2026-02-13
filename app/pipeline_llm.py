@@ -14,7 +14,7 @@ from tenacity import (
     wait_random_exponential,
 )
 
-from app.config import LLM_MAX_PARALLEL, LLM_NLI_SYSTEM_PROMPT
+from app.config import DEFAULT_MODEL, LLM_MAX_PARALLEL, LLM_NLI_SYSTEM_PROMPT
 from app.convert_to_our_format import LABEL_MAP_DEFAULT
 from app.openai_client import make_async_client, make_client
 from app.settings import SIDEBAR_CSS, nav_tag
@@ -31,7 +31,7 @@ def run_llm_nli_file(
     *,
     output_path: str | Path | None = None,
     system_prompt: str = "",
-    model_name: str = "gpt-4o",
+    model_name: str = DEFAULT_MODEL,
     temperature: float = 0.01,
     label_map: Dict[str, str] | None = None,
 ) -> Path:
@@ -124,7 +124,7 @@ def build_demo():
                     file_count="single",
                 )
                 model = gr.Textbox(
-                    label="Model (OpenAI/OpenRouter id)", value="gpt-4o-mini"
+                    label="Model (OpenAI/OpenRouter id)", value=DEFAULT_MODEL
                 )
                 temp = gr.Slider(0.0, 1.0, value=0.2, step=0.05, label="Temperature")
                 sys_prompt = gr.Textbox(
@@ -214,7 +214,7 @@ async def run_llm_nli_file_async(
     *,
     output_path: str | Path | None = None,
     system_prompt: str = "",
-    model_name: str = "gpt-4o",
+    model_name: str = DEFAULT_MODEL,
     temperature: float = 0.01,
     label_map: Dict[str, str] | None = None,
     max_concurrency: int = 8,

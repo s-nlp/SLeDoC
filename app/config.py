@@ -100,3 +100,4 @@ CLAIM_EXTRACTOR_SYSTEM_PROMPT: str = load_prompt(
 
 # Public config
 LLM_MAX_PARALLEL: int = _env_int("LLM_MAX_PARALLEL", 8)
+DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "gpt-4o-mini")

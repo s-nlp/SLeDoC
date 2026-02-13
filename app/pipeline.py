@@ -6,6 +6,7 @@ import gradio as gr
 
 from app.align_docs import demo as align_demo
 from app.claim_extractor import DEFAULT_SYSTEM_PROMPT, run_claim_extraction
+from app.config import DEFAULT_MODEL
 from app.combine_pairs import demo as combine_demo
 from app.nli_predict import demo as nli_predict_demo
 from app.pipeline_llm import LLM_NLI_SYSTEM_PROMPT, run_llm_nli_file
@@ -81,7 +82,8 @@ def build_demo():
                 label="System prompt", value=DEFAULT_SYSTEM_PROMPT, lines=6
             )
             model = gr.Textbox(
-                label="OpenAI model (env configured)", value="gpt-4o-mini"
+                label="OpenAI/OpenRouter model (env configured)",
+                value=DEFAULT_MODEL,
             )
 
             run_btn = gr.Button("Extract", variant="primary")
@@ -125,7 +127,7 @@ def build_demo():
             sys_prompt_12 = gr.Textbox(
                 label="LLM (1+2) system prompt", value=LLM_NLI_SYSTEM_PROMPT, lines=10
             )
-            model_12 = gr.Textbox(label="OpenAI/OpenRouter model", value="gpt-4o-mini")
+            model_12 = gr.Textbox(label="OpenAI/OpenRouter model", value=DEFAULT_MODEL)
             temp_12 = gr.Slider(0.0, 1.0, value=0.2, step=0.05, label="Temperature")
 
             run_btn_12 = gr.Button("Run LLM (extract+NLI)", variant="primary")

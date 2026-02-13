@@ -15,7 +15,7 @@ from tenacity import (
 )
 
 from app.config import CLAIM_EXTRACTOR_SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT
-from app.config import LLM_MAX_PARALLEL
+from app.config import DEFAULT_MODEL, LLM_MAX_PARALLEL
 from app.openai_client import make_async_client, make_client
 
 os.environ["TOKENIZERS_PARALLELISM"] = "True"
@@ -26,7 +26,7 @@ def run_claim_extraction(
     output_path: str | Path | None = None,
     *,
     system_prompt: str = "",
-    model_name: str = "gpt-4o",
+    model_name: str = DEFAULT_MODEL,
     temperature: float = 0.2,
 ) -> Path:
     """Sync wrapper around `run_claim_extraction_async` enabling parallel LLM calls."""
@@ -143,7 +143,7 @@ async def run_claim_extraction_async(
     output_path: str | Path | None = None,
     *,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
-    model_name: str = "gpt-4o",
+    model_name: str = DEFAULT_MODEL,
     temperature: float = 0.2,
     max_concurrency: int = 8,
 ) -> Path:

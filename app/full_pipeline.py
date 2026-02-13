@@ -21,7 +21,7 @@ from app.claim_extractor import run_claim_extraction
 # Stage 3 building blocks
 from app.combine_pairs import _preview_html, choose, download
 from app.config import CLAIM_EXTRACTOR_SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT
-from app.config import LLM_NLI_SYSTEM_PROMPT
+from app.config import DEFAULT_MODEL, LLM_NLI_SYSTEM_PROMPT
 
 # Stage 2
 from app.nli_predict import _list_models, run_nli_file
@@ -354,7 +354,7 @@ with gr.Blocks(css=SIDEBAR_CSS + EXTRA_CSS, fill_height=True) as demo:
             system_prompt = gr.Textbox(
                 value=LLM_NLI_SYSTEM_PROMPT, label="System prompt", lines=10
             )
-            llm_model = gr.Textbox(value="gpt-4o", label="Model name")
+            llm_model = gr.Textbox(value=DEFAULT_MODEL, label="Model name")
             llm_temp = gr.Slider(0.0, 1.0, value=0.2, step=0.05, label="Temperature")
         with gr.Accordion("NLI model", open=False):
             nli_model = gr.Dropdown(
