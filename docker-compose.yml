@@ -1,0 +1,11 @@
+services:
+  viewers:
+    build: .
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./example_data:/app/example_data:ro
+      - ./nli:/app/nli:ro
+      - .env:/app/.env:ro
+    command: uvicorn app.main:app --host 0.0.0.0 --port 7860
+    restart: unless-stopped
