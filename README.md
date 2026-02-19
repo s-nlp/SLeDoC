@@ -1,17 +1,45 @@
-# SLeDoc 🖥️
+# SLeDoc: System for Legal Document Comparison 🖥️✨
 
-Gradio-based dashboards for SLeDoc
+Gradio-based UI for comparing documents and spotting meaningful semantic matches/mismatches.
 
-Full Demo is available by the [link](https://8f4286b904ede34fdd.gradio.live)
+🎥 Demo video: [link](https://drive.google.com/drive/folders/1vTmJgdaSdraEqrOuviqmwohF1lsTlQn4?usp=sharing)
 
-# Overview
+📊 Full demo: [Gradio live link](https://d7e8c48220c9a28613.gradio.live)
 
-## Repository
+![UI screenshot](example_data/ui.png)
+
+We present SLeDoC, a system for pairwise,
+span-aware semantic document comparison that moves beyond
+token- or character-level matching to semantic judgments. SLeDoC
+combines information-retrieval (IR) techniques with state-of-the art large language models (LLMs).
+
+# Overview 🌿
+
+## What This Repo Delivers 🎯
+SLeDoc provides an end-to-end flow to compare two documents, align their claims, and surface semantic mismatches with short, readable explanations.
+
+The primary UI lives in `app/full_pipeline_new.py`.
+
+## Pipeline: Full Mismatch Flow 🧭
+Below is the full pipeline as implemented in the main Gradio app (`full_pipeline_new.py`)
+
+1. 📄 Input documents: two files (docx / code / text).
+2. 🧹 Text extraction and cleanup.
+3. ✂️ Paragraph split + claim extraction.
+4. 🔗 Pairwise matching (LLM + rules).
+5. ⚖️ NLI labeling (contradiction / neutral / entailment).
+6. 📌 Anchor span selection for precise evidence.
+7. 🖥️ UI rendering: side-by-side views + explanations + exportable JSON.
+
+![Full pipeline overview](example_data/system_overview.png)
+
+
+## Repository Layout 🗂️
 ```
 app/ Python package
 │
 ├─ main.py FastAPI entry – mounts all three UIs
-├─ full_pipeline_new.py Mismatch viewer
+├─ full_pipeline_new.py Full mismatch pipeline + UI
 ├─ nli.py NLI viewer
 └─ pipeline.py Two-step pipeline
 │
@@ -19,21 +47,9 @@ app/ Python package
 ├─ Dockerfile
 ├─ docker-compose.yml
 └─ Makefile
-
-### How “ADDITION with Anchor” works
-Your LLM returns items like:
-
-```json
-{
-  "span_1": "...",
-  "span_2": "...",
-  "reasoning": "...",
-  "label": "addition",
-  "anchor": "<verbatim phrase from the *first* paragraph>"
-}
 ```
 
-## Environment/Configuration (.env)
+## Environment/Configuration (.env) 🔧
 
 Create a `.env` from `.env.example` (or set these in your process manager):
 
@@ -50,7 +66,7 @@ Optional:
 You may also inline long prompts via `LLM_NLI_SYSTEM_PROMPT` / `CLAIM_EXTRACTOR_SYSTEM_PROMPT`
 
 
-## Quick start (Docker)
+## Quick start (Docker) 🐳
 Before any launch need to create an environment file:
 `.env`:
 ```bash
@@ -78,7 +94,7 @@ docker build -t viewers .
 docker run --rm -p 7860:7860 viewers
 ```
 
-## local development
+## Local development 💻
 ```bash
 # install deps into the active venv
 make vendor
