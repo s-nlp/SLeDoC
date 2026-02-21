@@ -4,7 +4,7 @@ Gradio-based UI for comparing documents and spotting meaningful semantic matches
 
 🎥 Demo video: [link](https://drive.google.com/drive/folders/1vTmJgdaSdraEqrOuviqmwohF1lsTlQn4?usp=sharing)
 
-📊 Full demo: [Gradio live link](https://4b8e84bfa1617f0a89.gradio.live)
+📊 Full demo: [Gradio live link](http://193.124.204.121:7860)
 
 ![UI screenshot](example_data/ui.png)
 
